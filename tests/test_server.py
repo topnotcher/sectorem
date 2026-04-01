@@ -21,27 +21,27 @@ class TestAiohttpCallbackServer:
 
     @pytest.mark.asyncio
     async def test_url_omits_port_80_for_http(self):
-        server = AiohttpCallbackServer(_noop, port=80, url_host="example.com")
-        assert server.url == "http://example.com/callback"
+        server = AiohttpCallbackServer(_noop, port=80)
+        assert server.url == "http://127.0.0.1/callback"
 
     @pytest.mark.asyncio
     async def test_url_omits_port_443_for_https(self):
-        server = AiohttpCallbackServer(_noop, port=443, url_host="example.com", scheme="https")
-        assert server.url == "https://example.com/callback"
+        ssl_ctx = _default_ssl_context()
+        server = AiohttpCallbackServer(_noop, port=443, ssl_context=ssl_ctx)
+        assert server.url == "https://127.0.0.1/callback"
 
     @pytest.mark.asyncio
     async def test_url_includes_non_default_port(self):
-        server = AiohttpCallbackServer(_noop, port=8443, url_host="example.com", scheme="https")
-        assert server.url == "https://example.com:8443/callback"
+        ssl_ctx = _default_ssl_context()
+        server = AiohttpCallbackServer(_noop, port=8443, ssl_context=ssl_ctx)
+        assert server.url == "https://127.0.0.1:8443/callback"
 
     @pytest.mark.asyncio
-    async def test_url_host_overrides_bind_host(self):
-        server = AiohttpCallbackServer(_noop, host="0.0.0.0", port=8080, url_host="myapp.example.com")
-        assert server.url == "http://myapp.example.com:8080/callback"
-
-    @pytest.mark.asyncio
-    async def test_url_port_overrides_bind_port(self):
-        server = AiohttpCallbackServer(_noop, host="0.0.0.0", port=8080, url_host="myapp.example.com", url_port=443, scheme="https")
+    async def test_explicit_url_overrides_computed(self):
+        server = AiohttpCallbackServer(
+            _noop, host="0.0.0.0", port=8080,
+            url="https://myapp.example.com/callback",
+        )
         assert server.url == "https://myapp.example.com/callback"
 
     @pytest.mark.asyncio

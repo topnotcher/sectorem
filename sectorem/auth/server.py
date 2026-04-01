@@ -45,13 +45,8 @@ class AiohttpCallbackServer(CallbackServer):
     :param host: Address to bind the server to.
     :param port: Port to bind the server to.
     :param path: URL path to listen on.
-    :param url_host: Hostname used in the callback URL.
-        Defaults to *host*.  Set this when behind a reverse proxy.
-    :param url_port: Port used in the callback URL.
-        Defaults to *port*.
-    :param scheme: URL scheme (``http`` or ``https``).
-        Defaults to ``https`` when *ssl_context* is provided,
-        ``http`` otherwise.
+    :param url: External URL for use when behind a reverse proxy. Constructed from ``host``, ``port``, and
+        ``ssl_context`` if not provided.
     :param ssl_context: TLS context for the server.  ``None``
         for plain HTTP.
     """
@@ -62,31 +57,26 @@ class AiohttpCallbackServer(CallbackServer):
         host: str = "127.0.0.1",
         port: int = 8080,
         path: str = "/callback",
-        url_host: str | None = None,
-        url_port: int | None = None,
-        scheme: str | None = None,
+        url: str | None = None,
         ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         self._callback = callback
         self._host = host
         self._port = port
         self._path = path
-        self._url_host = url_host or host
-        self._url_port = url_port or port
-        self._scheme = scheme or ("https" if ssl_context else "http")
         self._ssl_context = ssl_context
         self._runner: web.AppRunner | None = None
 
+        if url is not None:
+            self._url = url
+        else:
+            scheme = 'https' if ssl_context is not None else 'http'
+            port_str = '' if (scheme, port) in (("http", 80), ("https", 443)) else f":{port}"
+            self._url = f"{scheme}://{host}{port_str}{path}"
+
     @property
     def url(self) -> str:
-        default_port = (
-            (self._scheme == "http" and self._url_port == 80)
-            or (self._scheme == "https" and self._url_port == 443)
-        )
-        if default_port:
-            return f"{self._scheme}://{self._url_host}{self._path}"
-        else:
-            return f"{self._scheme}://{self._url_host}:{self._url_port}{self._path}"
+        return self._url
 
     async def start(self) -> None:
         app = web.Application()
@@ -135,16 +125,11 @@ def localhost_server(
     Returns a factory that, when called with an :data:`AuthCallback`,
     produces an HTTPS :class:`AiohttpCallbackServer` bound to the
     given address using the bundled self-signed certificate.
-
-    Binds to *port* (default 8443) but advertises port 443 in the
-    callback URL, assuming a redirect (e.g. ``iptables``, ``socat``)
-    from 443 to the bind port.
     """
 
     async def factory(callback: AuthCallback) -> CallbackServer:
         return AiohttpCallbackServer(
             callback, host, port, path,
-            url_port=port,
             ssl_context=_default_ssl_context(),
         )
 
