@@ -1,6 +1,6 @@
 """Sectorem — async Python client for the Charles Schwab API."""
 
-from .auth import Authenticator, TokenStore
+from .auth import AuthProvider, Authenticator, TokenStore
 from .auth.token import FileTokenStore, Token
 from .client import SchwabClient
 from .errors import ApiError, AuthenticationError, NotAuthenticatedError, RateLimitError, SectoremError, StreamError
@@ -11,6 +11,7 @@ from .trader import TraderClient
 __all__ = [
     "ApiError",
     "AuthenticationError",
+    "AuthProvider",
     "Authenticator",
     "FileTokenStore",
     "MarketDataClient",

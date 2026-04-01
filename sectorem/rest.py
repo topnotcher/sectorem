@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from .auth import Authenticator
+from .auth import AuthProvider
 from .errors import ApiError, RateLimitError
 
 log = logging.getLogger(__name__)
@@ -19,16 +19,16 @@ class RestClient:
     endpoint-specific methods on top.
 
     Authentication and session management are delegated to the
-    :class:`~sectorem.auth.Authenticator`: the session returned by
-    :meth:`~sectorem.auth.Authenticator.get_authenticated_session`
+    :class:`~sectorem.auth.AuthProvider`: the session returned by
+    :meth:`~sectorem.auth.AuthProvider.get_authenticated_session`
     automatically injects the Bearer token into every request.
 
-    :param auth: Authenticator providing the authenticated session.
+    :param auth: Auth provider supplying the authenticated session.
     :param base_url: API base URL (e.g.
         ``https://api.schwabapi.com/trader/v1``).
     """
 
-    def __init__(self, auth: Authenticator, base_url: str) -> None:
+    def __init__(self, auth: AuthProvider, base_url: str) -> None:
         self._auth = auth
         self._base_url = base_url.rstrip("/")
 

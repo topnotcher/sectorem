@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 
-from sectorem.auth.manager import Authenticator
+from sectorem.auth.manager import AuthProvider
 from sectorem.errors import ApiError, RateLimitError
 from sectorem.rest import RestClient
 
@@ -20,7 +20,7 @@ async def mock_auth():
     Mock Authenticator whose ``get_authenticated_session()`` returns
     a real :class:`aiohttp.ClientSession`.
     """
-    auth = AsyncMock(spec=Authenticator)
+    auth = AsyncMock(spec=AuthProvider)
     type(auth).access_token = PropertyMock(return_value="test-token-123")
     session = aiohttp.ClientSession()
     auth.get_authenticated_session.return_value = session

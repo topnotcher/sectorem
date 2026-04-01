@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .auth import Authenticator, TokenStore
+from .auth import Authenticator, AuthProvider, TokenStore
 from .market import MarketDataClient
 from .trader import TraderClient
 
@@ -47,7 +47,7 @@ class SchwabClient:
     def __init__(
         self,
         *,
-        auth: Authenticator | None = None,
+        auth: AuthProvider | None = None,
         app_key: str | None = None,
         app_secret: str | None = None,
         token_store: TokenStore | None = None,
@@ -60,7 +60,7 @@ class SchwabClient:
         elif app_key is not None and app_secret is not None:
             if token_store is None:
                 raise ValueError("token_store is required when using app_key/app_secret")
-            self._auth = Authenticator(
+            self._auth: AuthProvider = Authenticator(
                 app_key=app_key,
                 app_secret=app_secret,
                 token_store=token_store,
@@ -72,7 +72,7 @@ class SchwabClient:
         self._market: MarketDataClient | None = None
 
     @property
-    def auth(self) -> Authenticator:
+    def auth(self) -> AuthProvider:
         return self._auth
 
     @property

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ..auth import Authenticator
+from ..auth import AuthProvider
 from ..rest import RestClient
 
 MARKET_DATA_BASE_URL = "https://api.schwabapi.com/marketdata/v1"
@@ -17,7 +17,7 @@ class MarketDataClient(RestClient):
     :param auth: Authenticator providing access tokens and session.
     """
 
-    def __init__(self, auth: Authenticator) -> None:
+    def __init__(self, auth: AuthProvider) -> None:
         super().__init__(auth, MARKET_DATA_BASE_URL)
 
     async def get_quotes(self, symbols: list[str], *, fields: list[str] | None = None) -> dict:

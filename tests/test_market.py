@@ -9,13 +9,13 @@ import pytest
 import pytest_asyncio
 from aiohttp import web
 
-from sectorem.auth.manager import Authenticator
+from sectorem.auth.manager import AuthProvider
 from sectorem.market import MarketDataClient
 
 
 @pytest_asyncio.fixture
 async def mock_auth():
-    auth = AsyncMock(spec=Authenticator)
+    auth = AsyncMock(spec=AuthProvider)
     type(auth).access_token = PropertyMock(return_value="test-token")
     session = aiohttp.ClientSession()
     auth.get_authenticated_session.return_value = session
