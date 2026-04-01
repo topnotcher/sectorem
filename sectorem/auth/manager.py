@@ -179,7 +179,7 @@ class Authenticator(AuthProvider):
         await self._server.start()
         self._token = await self._token_store.load()
 
-        if not self._refresh_expired():
+        if not self._access_expired():
             self._state = AuthState.READY
             self._active_event.set()
 
@@ -270,6 +270,11 @@ class Authenticator(AuthProvider):
             self._active_event.clear()
         else:
             self._token = Token.from_response(data, refresh_issued_at=self._token.refresh_issued_at)
+
+            if not self._active_event.is_set():
+                self._state = AuthState.READY
+                self._active_event.set()
+
             await self._token_store.save(self._token)
 
     def _refresh_expired(self) -> bool:
@@ -286,6 +291,9 @@ class Authenticator(AuthProvider):
             return datetime.min.replace(tzinfo=timezone.utc)
         else:
             return self._token.access_expires_at - self._access_refresh_buffer
+
+    def _access_expired(self) -> bool:
+        return self._token is None or self._token.access_expired
 
     def _prompt_for_auth(self) -> None:
         self._reauth_prompted = True

@@ -2,11 +2,14 @@
 
 import asyncio
 import os
+import logging
 
 from sectorem import SchwabClient, FileTokenStore
 
 
 async def main():
+    logging.basicConfig(level=logging.DEBUG)
+
     app_key = os.environ["SCHWAB_APP_KEY"]
     app_secret = os.environ["SCHWAB_APP_SECRET"]
     token_path = os.environ.get("SCHWAB_TOKEN_PATH", "~/.sectorem/token.json")
