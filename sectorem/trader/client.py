@@ -19,15 +19,35 @@ class TraderClient(RestClient):
 
     def __init__(self, auth: AuthProvider) -> None:
         super().__init__(auth, TRADER_BASE_URL)
+        self._accounts: dict[str, str] = {}
 
-    async def get_account_numbers(self) -> list[dict]:
-        """
-        Get account number/hash mappings.
+    async def _refresh_accounts(self) -> None:
+        """Refresh the account number to hash mapping."""
+        for acct in await self._get("accounts/accountNumbers"):
+            self._accounts[acct["accountNumber"]] = acct["hashValue"]
 
-        The hashes are required for all other account-specific
-        endpoints.
+    async def get_account_hash(self, account_number: str) -> str:
         """
-        return await self._get("accounts/accountNumbers")
+        Get the hash value for an account number.
+
+        The hash value is required for most account-specific API calls. This method need not be used directly unless you
+        are making your own custom API calls; the higher-level methods like :meth:`~TraderClient.get_account` handle the
+        mapping.
+        """
+        for _ in range(2):
+            hashed_account = self._accounts.get(account_number)
+
+            if hashed_account is None:
+                await self._refresh_accounts()
+            else:
+                return hashed_account
+
+        raise ValueError(f"Account number {account_number} not found")
+
+    async def get_account_numbers(self) -> list[str]:
+        """Get all linked account numbers."""
+        await self._refresh_accounts()
+        return list(self._accounts.keys())
 
     async def get_accounts(self, *, fields: list[str] | None = None) -> list[dict]:
         """Get all linked accounts."""
@@ -36,11 +56,13 @@ class TraderClient(RestClient):
             params["fields"] = ",".join(fields)
         return await self._get("accounts", params=params)
 
-    async def get_account(self, account_hash: str, *, fields: list[str] | None = None) -> dict:
-        """Get a single account by hash."""
+    async def get_account(self, account: str, *, fields: list[str] | None = None) -> dict:
+        """Get a single account by account number."""
         params = {}
         if fields is not None:
             params["fields"] = ",".join(fields)
+
+        account_hash = await self.get_account_hash(account)
         return await self._get(f"accounts/{account_hash}", params=params)
 
     async def get_user_preferences(self) -> dict:

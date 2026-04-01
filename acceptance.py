@@ -21,13 +21,11 @@ async def main():
         print("\n--- Account Numbers ---")
         accounts = await client.trader.get_account_numbers()
         for acct in accounts:
-            print(f"  {acct['accountNumber']} -> {acct['hashValue']}")
+            print(f"{acct}")
 
-        if accounts:
-            hash_value = accounts[0]["hashValue"]
-
-            print(f"\n--- Account Detail ({accounts[0]['accountNumber']}) ---")
-            detail = await client.trader.get_account(hash_value, fields=["positions"])
+        for account in accounts:
+            print(f"\n--- Account Detail ({account}) ---")
+            detail = await client.trader.get_account(account, fields=["positions"])
             print(f"  Type: {detail['securitiesAccount']['type']}")
 
         print("\n--- Quotes ---")
