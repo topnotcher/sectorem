@@ -114,7 +114,7 @@ class FileTokenStore(TokenStore):
     """Store tokens as JSON on the local filesystem."""
 
     def __init__(self, path: str | Path) -> None:
-        self._path = Path(path)
+        self._path = Path(path).expanduser()
 
     async def load(self) -> Token | None:
         if not self._path.exists():
