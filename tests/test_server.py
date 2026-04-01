@@ -1,11 +1,12 @@
 """Tests for the OAuth callback server."""
 
 import asyncio
+import ssl
 
 import aiohttp
 import pytest
 
-from sectorem.auth.server import AiohttpCallbackServer, localhost_server
+from sectorem.auth.server import AiohttpCallbackServer, localhost_server, _default_ssl_context
 
 
 async def _noop(params):
@@ -69,6 +70,36 @@ class TestAiohttpCallbackServer:
             await server.stop()
 
     @pytest.mark.asyncio
+    async def test_callback_receives_query_params_https(self):
+        received = asyncio.Future()
+
+        async def capture(params):
+            received.set_result(params)
+
+        ssl_ctx = _default_ssl_context()
+        server = AiohttpCallbackServer(capture, "127.0.0.1", 0, "/callback", ssl_context=ssl_ctx)
+        await server.start()
+        try:
+            site = list(server._runner._sites)[0]
+            port = site._server.sockets[0].getsockname()[1]
+            url = f"https://127.0.0.1:{port}/callback?code=abc123&session=xyz"
+
+            # Trust the self-signed cert for this request.
+            client_ssl = ssl.create_default_context()
+            client_ssl.check_hostname = False
+            client_ssl.verify_mode = ssl.CERT_NONE
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, ssl=client_ssl) as resp:
+                    assert resp.status == 200
+
+            params = await asyncio.wait_for(received, timeout=2)
+            assert params["code"] == "abc123"
+            assert params["session"] == "xyz"
+        finally:
+            await server.stop()
+
+    @pytest.mark.asyncio
     async def test_stop_is_idempotent(self):
         server = AiohttpCallbackServer(_noop, "127.0.0.1", 0, "/callback")
         await server.start()
@@ -78,7 +109,9 @@ class TestAiohttpCallbackServer:
 
 class TestLocalhostServerFactory:
     @pytest.mark.asyncio
-    async def test_factory_creates_server(self):
-        factory = localhost_server(host="127.0.0.1", port=9999, path="/auth")
+    async def test_factory_creates_https_server(self):
+        factory = localhost_server()
         server = await factory(_noop)
-        assert server.url == "http://127.0.0.1:9999/auth"
+        assert server.url == "https://127.0.0.1:8443/callback"
+        assert server._port == 8443
+        assert server._ssl_context is not None

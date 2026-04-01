@@ -5,6 +5,8 @@ from __future__ import annotations
 import abc
 import ssl
 from collections.abc import Awaitable, Callable
+from importlib import resources
+
 from aiohttp import web
 
 #: Called by the server when Schwab redirects with query parameters.
@@ -108,20 +110,42 @@ class AiohttpCallbackServer(CallbackServer):
         )
 
 
+def _default_ssl_context() -> ssl.SSLContext:
+    """
+    Build an SSL context using the bundled self-signed certificate.
+
+    The certificate covers ``IP:127.0.0.1`` and is valid for 10 years.
+    """
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    etc = resources.files("sectorem") / "etc"
+    with resources.as_file(etc / "localhost.crt") as certfile, \
+         resources.as_file(etc / "localhost.key") as keyfile:
+        ctx.load_cert_chain(certfile, keyfile)
+    return ctx
+
+
 def localhost_server(
     host: str = "127.0.0.1",
-    port: int = 8080,
+    port: int = 8443,
     path: str = "/callback",
 ) -> ServerFactory:
     """
     Create a :class:`ServerFactory` for a localhost callback server.
 
     Returns a factory that, when called with an :data:`AuthCallback`,
-    produces an :class:`AiohttpCallbackServer` bound to the given
-    address.
+    produces an HTTPS :class:`AiohttpCallbackServer` bound to the
+    given address using the bundled self-signed certificate.
+
+    Binds to *port* (default 8443) but advertises port 443 in the
+    callback URL, assuming a redirect (e.g. ``iptables``, ``socat``)
+    from 443 to the bind port.
     """
 
     async def factory(callback: AuthCallback) -> CallbackServer:
-        return AiohttpCallbackServer(callback, host, port, path)
+        return AiohttpCallbackServer(
+            callback, host, port, path,
+            url_port=port,
+            ssl_context=_default_ssl_context(),
+        )
 
     return factory
