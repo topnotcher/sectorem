@@ -5,8 +5,15 @@ from __future__ import annotations
 import abc
 import dataclasses
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import aiofiles.os
+import aiofiles
+
+
+log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -117,14 +124,18 @@ class FileTokenStore(TokenStore):
         self._path = Path(path).expanduser()
 
     async def load(self) -> Token | None:
-        if not self._path.exists():
-            return None
-        data = json.loads(self._path.read_text(encoding="utf-8"))
-        return Token.from_dict(data)
+        if not (await aiofiles.os.path.isfile(self._path)):
+             return None
+
+        async with aiofiles.open(self._path, "r", encoding="utf-8") as f:
+            try:
+                return Token.from_dict(json.loads(await f.read()))
+
+            except (KeyError, ValueError):
+                log.exception("Failed to parse token file %s; ignoring", self._path)
+                return None
 
     async def save(self, token: Token) -> None:
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        self._path.write_text(
-            json.dumps(token.to_dict(), indent=2),
-            encoding="utf-8",
-        )
+        await aiofiles.os.makedirs(self._path.parent, exist_ok=True)
+        async with aiofiles.open(self._path, "w", encoding="utf-8") as f:
+            await f.write(json.dumps(token.to_dict(), indent=2))
