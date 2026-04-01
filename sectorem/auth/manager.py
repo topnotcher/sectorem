@@ -5,7 +5,8 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
-from collections.abc import Callable, Coroutine, abstractmethod
+from collections.abc import Callable, Coroutine
+from abc import abstractmethod
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
