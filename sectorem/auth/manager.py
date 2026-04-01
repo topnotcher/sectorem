@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import aiohttp
+from aiohttp import ClientResponse, ClientSession, ClientRequest, ClientHandlerType
 
 from ..errors import AuthenticationError, NotAuthenticatedError
 from .server import CallbackServer, ServerFactory, localhost_server
@@ -82,7 +83,8 @@ class Authenticator:
         self._state = AuthState.INACTIVE
         self._token: Token | None = None
         self._server: CallbackServer | None = None
-        self._session: aiohttp.ClientSession | None = None
+        self._session: ClientSession | None = None
+        self._api_session: ClientSession | None = None
 
         self._active_event = asyncio.Event()
         self._maintenance_task: asyncio.Task | None = None
@@ -119,7 +121,7 @@ class Authenticator:
         if self._maintenance_task is not None:
             raise RuntimeError("Authenticator already started")
 
-        self._session = aiohttp.ClientSession()
+        self._session = ClientSession()
         self._server = await self._server_factory(self._on_callback)
         await self._server.start()
         self._token = await self._token_store.load()
@@ -143,6 +145,10 @@ class Authenticator:
         if self._server is not None:
             await self._server.stop()
             self._server = None
+
+        if self._api_session is not None:
+            await self._api_session.close()
+            self._api_session = None
 
         if self._session is not None:
             await self._session.close()
@@ -261,3 +267,19 @@ class Authenticator:
                 body = await resp.text()
                 raise AuthenticationError(f"Token request failed: {resp.status} {body}")
             return await resp.json()
+
+    async def _auth_middleware(self, req: ClientRequest, handler: ClientHandlerType) -> ClientResponse:
+        req.headers["Authorization"] = f'Bearer {self.access_token}'
+        return await handler(req)
+
+    def get_authenticated_session(self) -> ClientSession:
+        """
+        Get a shared :class:`aiohttp.ClientSession` that automatically
+        injects the Bearer token into every request.
+
+        Always returns the same session instance.  The session is
+        closed when :meth:`stop` is called.
+        """
+        if self._api_session is None:
+            self._api_session = ClientSession(middlewares=(self._auth_middleware,))
+        return self._api_session
