@@ -13,7 +13,7 @@ authors = [
 ]
 
 dependencies = [
-    "aiohttp>=3.9",
+    "aiohttp~=3.13",
     "aiofiles~=25.1",
 ]
 
