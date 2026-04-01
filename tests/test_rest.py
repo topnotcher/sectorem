@@ -112,7 +112,7 @@ class TestErrorMapping:
             await client._get("test")
 
         assert exc_info.value.status == 429
-        assert exc_info.value.response_body == "Too many requests"
+        assert "Too Many Requests" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_4xx_raises_api_error(self, mock_auth, aiohttp_server):

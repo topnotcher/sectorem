@@ -3,7 +3,19 @@
 from .auth import AuthProvider, Authenticator, TokenStore
 from .auth.token import FileTokenStore, Token
 from .client import SchwabClient
-from .errors import ApiError, AuthenticationError, NotAuthenticatedError, RateLimitError, SectoremError, StreamError
+from .errors import (
+    ApiError,
+    AuthenticationError,
+    ForbiddenError,
+    NotAuthenticatedError,
+    RateLimitError,
+    ResourceNotFoundError,
+    SectoremError,
+    ServerError,
+    ServiceUnavailableError,
+    StreamError,
+    UnauthorizedError,
+)
 from .market import MarketDataClient
 from .rest import RestClient
 from .trader import TraderClient
@@ -14,14 +26,19 @@ __all__ = [
     "AuthProvider",
     "Authenticator",
     "FileTokenStore",
+    "ForbiddenError",
     "MarketDataClient",
     "NotAuthenticatedError",
     "RateLimitError",
+    "ResourceNotFoundError",
     "RestClient",
     "SchwabClient",
     "SectoremError",
+    "ServerError",
+    "ServiceUnavailableError",
     "StreamError",
     "Token",
     "TokenStore",
     "TraderClient",
+    "UnauthorizedError",
 ]

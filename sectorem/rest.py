@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
+import aiohttp
 from typing import Any
 
 from .auth import AuthProvider
-from .errors import ApiError, RateLimitError
+from .errors import ApiError
 
 log = logging.getLogger(__name__)
 
@@ -50,16 +51,29 @@ class RestClient:
         session = self._auth.get_authenticated_session()
 
         async with session.request(method, url, **kwargs) as resp:
-            if resp.status == 429:
-                body = await resp.text()
-                raise RateLimitError(resp.status, "Rate limited", response_body=body)
             if resp.status >= 400:
-                body = await resp.text()
-                raise ApiError(resp.status, resp.reason or "Unknown error", response_body=body)
+                await self._api_error_from_resp(resp)
+
             if resp.content_type == "application/json":
                 return await resp.json()
             else:
                 return {}
+
+    @staticmethod
+    async def _api_error_from_resp(resp: aiohttp.ClientResponse) -> None:
+        message = resp.reason
+        errors = []
+        if resp.content_type == "application/json":
+            data = await resp.json()
+            message = data.get("message", resp.reason or "Unknown error")
+            errors = data.get("errors", [])
+
+        correlation_id = resp.headers.get('Schwab-Client-CorrelID')
+
+        if message is None:
+            message = "Unknown error"
+
+        raise ApiError(resp.status, message, errors=errors, correlation_id=correlation_id)
 
     async def _get(self, path: str, **kwargs: Any) -> dict:
         return await self._request("GET", path, **kwargs)
