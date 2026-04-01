@@ -112,6 +112,7 @@ class TestLocalhostServerFactory:
     async def test_factory_creates_https_server(self):
         factory = localhost_server()
         server = await factory(_noop)
-        assert server.url == "https://127.0.0.1:8443/callback"
+        assert server.url == "https://127.0.0.1:8443"
         assert server._port == 8443
+        assert server._path == '/'
         assert server._ssl_context is not None

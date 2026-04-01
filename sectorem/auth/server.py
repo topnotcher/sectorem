@@ -117,7 +117,6 @@ def _default_ssl_context() -> ssl.SSLContext:
 def localhost_server(
     host: str = "127.0.0.1",
     port: int = 8443,
-    path: str = "/callback",
 ) -> ServerFactory:
     """
     Create a :class:`ServerFactory` for a localhost callback server.
@@ -129,7 +128,8 @@ def localhost_server(
 
     async def factory(callback: AuthCallback) -> CallbackServer:
         return AiohttpCallbackServer(
-            callback, host, port, path,
+            callback, host, port, '/',
+            url=f'https://127.0.0.1:{port}',
             ssl_context=_default_ssl_context(),
         )
 
