@@ -36,8 +36,7 @@ class SchwabClient:
     corresponding client on first access.  All clients share the
     same Authenticator and session.
 
-    :param auth: Pre-built Authenticator.  Mutually exclusive with
-        *app_key* / *app_secret*.
+    :param auth: Pre-built :class:`~.AuthProvider`. Mutually exclusive with *app_key* / *app_secret*.
     :param app_key: Schwab application key.
     :param app_secret: Schwab application secret.
     :param token_store: Token persistence backend.  Required when

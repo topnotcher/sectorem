@@ -43,6 +43,14 @@ class AuthState(enum.Enum):
 
 
 class AuthProvider:
+    """
+    Abstract base class for authentication providers.
+
+    This is the interface for obtaining an access token and an authenticated session. The :class:`Authenticator`
+    implements the full OAuth2 flow and token lifecycle management, but other implementations may be used. For example,
+    an :class:`Authenticator` instance could run separately with a means to share tokens implemented via a
+    :class:`~.AuthProvider` subclass that reads/writes tokens from a shared database or cache.
+    """
 
     def __init__(self) -> None:
         self._api_session: ClientSession | None = None
