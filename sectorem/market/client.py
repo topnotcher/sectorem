@@ -30,4 +30,4 @@ class MarketDataClient(RestClient):
         params: dict = {"symbols": ",".join(symbols)}
         if fields is not None:
             params["fields"] = ",".join(fields)
-        return await self._get("quotes", params=params)
+        return await self.get("quotes", params=params)

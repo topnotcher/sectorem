@@ -43,7 +43,7 @@ class TestRequest:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("/v1")))
-        await client._get("accounts")
+        await client.get("accounts")
 
         assert received_path == "/v1/accounts"
 
@@ -61,7 +61,7 @@ class TestRequest:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("/v1/")))
-        await client._get("/accounts")
+        await client.get("/accounts")
 
         assert received_path == "/v1/accounts"
 
@@ -78,7 +78,7 @@ class TestRequest:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("")))
-        await client._get("quotes", params={"symbols": "AAPL,MSFT"})
+        await client.get("quotes", params={"symbols": "AAPL,MSFT"})
 
         assert received_params["symbols"] == "AAPL,MSFT"
 
@@ -92,7 +92,7 @@ class TestRequest:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("")))
-        result = await client._post("test")
+        result = await client.post("test")
 
         assert result == {}
 
@@ -109,7 +109,7 @@ class TestErrorMapping:
 
         client = RestClient(mock_auth, str(server.make_url("")))
         with pytest.raises(RateLimitError) as exc_info:
-            await client._get("test")
+            await client.get("test")
 
         assert exc_info.value.status == 429
         assert "Too Many Requests" in str(exc_info.value)
@@ -125,7 +125,7 @@ class TestErrorMapping:
 
         client = RestClient(mock_auth, str(server.make_url("")))
         with pytest.raises(ApiError) as exc_info:
-            await client._get("test")
+            await client.get("test")
 
         assert exc_info.value.status == 404
         assert "Not Found" in str(exc_info.value)
@@ -141,7 +141,7 @@ class TestErrorMapping:
 
         client = RestClient(mock_auth, str(server.make_url("")))
         with pytest.raises(ApiError) as exc_info:
-            await client._get("test")
+            await client.get("test")
 
         assert exc_info.value.status == 500
 
@@ -161,7 +161,7 @@ class TestHttpMethods:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("")))
-        result = await client._post("orders", json={"symbol": "AAPL"})
+        result = await client.post("orders", json={"symbol": "AAPL"})
 
         assert received["method"] == "POST"
         assert received["body"] == {"symbol": "AAPL"}
@@ -181,7 +181,7 @@ class TestHttpMethods:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("")))
-        result = await client._put("orders/123", json={"qty": 10})
+        result = await client.put("orders/123", json={"qty": 10})
 
         assert received_method == "PUT"
         assert result == {"updated": True}
@@ -200,6 +200,6 @@ class TestHttpMethods:
         server = await aiohttp_server(app)
 
         client = RestClient(mock_auth, str(server.make_url("")))
-        await client._delete("orders/123")
+        await client.delete("orders/123")
 
         assert received_method == "DELETE"

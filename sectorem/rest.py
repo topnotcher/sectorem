@@ -75,14 +75,26 @@ class RestClient:
 
         raise ApiError(resp.status, message, errors=errors, correlation_id=correlation_id)
 
-    async def _get(self, path: str, **kwargs: Any) -> dict:
+    async def get(self, path: str, **kwargs: Any) -> dict:
+        """
+        Make a GET request to the Schwab API.
+        """
         return await self._request("GET", path, **kwargs)
 
-    async def _post(self, path: str, **kwargs: Any) -> dict:
+    async def post(self, path: str, **kwargs: Any) -> dict:
+        """
+        Make a POST request to the Schwab API.
+        """
         return await self._request("POST", path, **kwargs)
 
-    async def _put(self, path: str, **kwargs: Any) -> dict:
+    async def put(self, path: str, **kwargs: Any) -> dict:
+        """
+        Make a PUT request to the Schwab API.
+        """
         return await self._request("PUT", path, **kwargs)
 
-    async def _delete(self, path: str, **kwargs: Any) -> dict:
+    async def delete(self, path: str, **kwargs: Any) -> dict:
+        """
+        Make a DELETE request to the Schwab API.
+        """
         return await self._request("DELETE", path, **kwargs)

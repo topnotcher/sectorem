@@ -26,10 +26,11 @@ async def main():
         for acct in accounts:
             print(f"{acct}")
 
-        for account in accounts:
-            print(f"\n--- Account Detail ({account}) ---")
-            detail = await client.trader.get_account(account, fields=["positions"])
-            print(f"  Type: {detail['securitiesAccount']['type']}")
+        for account in await client.trader.get_accounts():
+            print(f"\n--- Account Positions ({account.account_number}) ---")
+            positions = await account.get_positions()
+            for position in positions:
+                print(position)
 
         print("\n--- Quotes ---")
         quotes = await client.market.get_quotes(["AAPL", "MSFT", "SPY"])
