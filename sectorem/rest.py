@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+
 import aiohttp
 from typing import Any
 
@@ -10,6 +12,15 @@ from .auth import AuthProvider
 from .errors import ApiError
 
 log = logging.getLogger(__name__)
+
+
+class PrettyFloat(float):
+    """A float that displays with 4 decimal places."""
+
+    def __repr__(self) -> str:
+        return f"{self:.4f}"
+
+    __str__ = __repr__
 
 
 class RestClient:
@@ -55,7 +66,8 @@ class RestClient:
                 await self._api_error_from_resp(resp)
 
             if resp.content_type == "application/json":
-                return await resp.json()
+                text = await resp.text()
+                return json.loads(text, parse_float=PrettyFloat)
             else:
                 return {}
 
