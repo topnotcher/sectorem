@@ -105,5 +105,9 @@ class ServiceUnavailableError(ServerError):
     _CODE = 503
 
 
+class InvalidApiResponseError(SectoremError):
+    """Raised when an API response is missing expected fields or is otherwise malformed."""
+
+
 class StreamError(SectoremError):
     """Raised when the streaming connection encounters an error."""

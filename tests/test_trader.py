@@ -13,8 +13,11 @@ from sectorem.auth.manager import AuthProvider
 from sectorem.trader.client import TraderClient, Account
 from sectorem.trader.constants import AssetType, OptionRight
 from sectorem.trader.types import (
+    CashBalance,
     CollectiveInvestmentPosition,
     EquityPosition,
+    MarginBalance,
+    MarginInitialBalance,
     OptionPosition,
 )
 
@@ -394,3 +397,202 @@ class TestAccount:
         await account.get_positions()
 
         assert received_params["fields"] == "positions"
+
+    @pytest.mark.asyncio
+    async def test_is_margin_none_before_fetch(self, mock_auth, aiohttp_server):
+        async def numbers_handler(request):
+            return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
+        app = web.Application()
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+
+        assert account.is_margin is None
+
+    @pytest.mark.asyncio
+    async def test_get_balances_margin(self, mock_auth, aiohttp_server):
+        async def numbers_handler(request):
+            return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
+        async def account_handler(request):
+            return web.json_response({
+                "securitiesAccount": {
+                    "type": "MARGIN",
+                    "currentBalances": {
+                        "accruedInterest": 0.0,
+                        "availableFunds": 10000.0,
+                        "availableFundsNonMarginableTrade": 8000.0,
+                        "bondValue": 0.0,
+                        "buyingPower": 20000.0,
+                        "buyingPowerNonMarginableTrade": 16000.0,
+                        "cashBalance": 5000.0,
+                        "cashReceipts": 0.0,
+                        "dayTradingBuyingPower": 40000.0,
+                        "equity": 50000.0,
+                        "equityPercentage": 75.0,
+                        "liquidationValue": 48000.0,
+                        "longMarginValue": 30000.0,
+                        "longMarketValue": 32000.0,
+                        "longOptionMarketValue": 2000.0,
+                        "maintenanceCall": 0.0,
+                        "maintenanceRequirement": 15000.0,
+                        "marginBalance": -20000.0,
+                        "moneyMarketFund": 0.0,
+                        "mutualFundValue": 0.0,
+                        "pendingDeposits": 0.0,
+                        "regTCall": 0.0,
+                        "savings": 0.0,
+                        "shortBalance": 0.0,
+                        "shortMarginValue": 0.0,
+                        "shortMarketValue": 0.0,
+                        "shortOptionMarketValue": -5000.0,
+                        "sma": 10000.0,
+                    },
+                    "projectedBalances": {
+                        "availableFunds": 10000.0,
+                        "availableFundsNonMarginableTrade": 8000.0,
+                        "buyingPower": 20000.0,
+                        "dayTradingBuyingPower": 40000.0,
+                        "dayTradingBuyingPowerCall": 0.0,
+                        "isInCall": False,
+                        "maintenanceCall": 0.0,
+                        "regTCall": 0.0,
+                        "stockBuyingPower": 20000.0,
+                    },
+                },
+            })
+
+        app = web.Application()
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
+        app.router.add_get("/trader/v1/accounts/abc", account_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        bal = await account.get_balances()
+
+        assert isinstance(bal, MarginBalance)
+        assert bal.buying_power == 20000.0
+        assert bal.equity == 50000.0
+        assert bal.is_in_call is False
+        assert bal.stock_buying_power == 20000.0
+        assert bal.margin_balance == -20000.0
+        assert account.is_margin is True
+
+    @pytest.mark.asyncio
+    async def test_get_initial_balances_margin(self, mock_auth, aiohttp_server):
+        async def numbers_handler(request):
+            return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
+        async def account_handler(request):
+            return web.json_response({
+                "securitiesAccount": {
+                    "type": "MARGIN",
+                    "initialBalances": {
+                        "accruedInterest": 0.0,
+                        "availableFundsNonMarginableTrade": 8000.0,
+                        "bondValue": 0.0,
+                        "buyingPower": 20000.0,
+                        "cashAvailableForTrading": 0.0,
+                        "cashBalance": 5000.0,
+                        "cashReceipts": 0.0,
+                        "dayTradingBuyingPower": 40000.0,
+                        "dayTradingBuyingPowerCall": 0.0,
+                        "dayTradingEquityCall": 0.0,
+                        "equity": 50000.0,
+                        "equityPercentage": 75.0,
+                        "isInCall": False,
+                        "liquidationValue": 48000.0,
+                        "longMarginValue": 30000.0,
+                        "longOptionMarketValue": 2000.0,
+                        "longStockValue": 30000.0,
+                        "maintenanceCall": 0.0,
+                        "maintenanceRequirement": 15000.0,
+                        "marginBalance": -20000.0,
+                        "marginEquity": 55000.0,
+                        "moneyMarketFund": 0.0,
+                        "mutualFundValue": 0.0,
+                        "pendingDeposits": 0.0,
+                        "regTCall": 0.0,
+                        "shortBalance": 0.0,
+                        "shortMarginValue": 0.0,
+                        "shortOptionMarketValue": -5000.0,
+                        "shortStockValue": -5000.0,
+                        "totalCash": 0.0,
+                    },
+                },
+            })
+
+        app = web.Application()
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
+        app.router.add_get("/trader/v1/accounts/abc", account_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        bal = await account.get_initial_balances()
+
+        assert isinstance(bal, MarginInitialBalance)
+        assert bal.liquidation_value == 48000.0
+        assert bal.equity == 50000.0
+        assert bal.is_in_call is False
+        assert bal.margin_equity == 55000.0
+        assert account.is_margin is True
+
+    @pytest.mark.asyncio
+    async def test_get_balances_cash(self, mock_auth, aiohttp_server):
+        async def numbers_handler(request):
+            return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
+        async def account_handler(request):
+            return web.json_response({
+                "securitiesAccount": {
+                    "type": "CASH",
+                    "currentBalances": {
+                        "cashAvailableForTrading": 5000.0,
+                        "cashAvailableForWithdrawal": 4000.0,
+                        "cashCall": 0.0,
+                        "longNonMarginableMarketValue": 3000.0,
+                        "totalCash": 5000.0,
+                        "cashDebitCallValue": 0.0,
+                        "unsettledCash": 1000.0,
+                    },
+                    "projectedBalances": {},
+                },
+            })
+
+        app = web.Application()
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
+        app.router.add_get("/trader/v1/accounts/abc", account_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        bal = await account.get_balances()
+
+        assert isinstance(bal, CashBalance)
+        assert bal.total_cash == 5000.0
+        assert account.is_margin is False

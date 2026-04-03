@@ -32,6 +32,10 @@ async def main():
             for position in positions:
                 print(position)
 
+
+            print(f"\n--- Account Balances ({account.nickname} {account.account_number}) ---")
+            print(await account.get_balances())
+
         print("\n--- Quotes ---")
         quotes = await client.market.get_quotes(["AAPL", "MSFT", "SPY"])
         for symbol, data in quotes.items():

@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from ..auth import AuthProvider
 from ..rest import RestClient
-from .types import Position
-from .parse import parse_position
+from .constants import AccountType
+from .types import Balance, InitialBalance, Position
+from .parse import parse_balance, parse_initial_balance, parse_position
 
 
 TRADER_BASE_URL = "https://api.schwabapi.com/trader/v1"
@@ -102,6 +103,14 @@ class Account:
 
         self._account_hash: str = account_hash
         self._client: TraderClient = client
+        self._account_type: AccountType | None = None
+
+    @property
+    def is_margin(self) -> bool | None:
+        """Whether this is a margin account. ``None`` if not yet fetched."""
+        if self._account_type is None:
+            return None
+        return self._account_type == AccountType.MARGIN
 
     async def get_positions(self) -> list[Position]:
         """Get the current positions in this account."""
@@ -109,6 +118,29 @@ class Account:
         positions = info.get('positions', [])
 
         return [parse_position(p) for p in positions]
+
+    async def get_balances(self) -> Balance:
+        """
+        Get current balances for this account.
+
+        Merges fields from ``currentBalances`` and ``projectedBalances``
+        in the API response to produce a complete picture.
+        """
+        info = await self._get_info()
+        account_type = self._update_account_type(info)
+        return parse_balance(info["currentBalances"], info.get("projectedBalances", {}), account_type)
+
+    async def get_initial_balances(self) -> InitialBalance:
+        """Get start-of-day balances for this account."""
+        info = await self._get_info()
+        account_type = self._update_account_type(info)
+        return parse_initial_balance(info["initialBalances"], account_type)
+
+    def _update_account_type(self, info: dict) -> AccountType:
+        """Extract and cache the account type from an API response."""
+        account_type = AccountType(info["type"])
+        self._account_type = account_type
+        return account_type
 
     async def _get_info(self, info_type: str | None=None) -> dict:
         if info_type is not None:
