@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from .constants import AssetType, OptionRight
+from .constants import AssetType, InstrumentType, OptionRight
 
 
 # ---------------------------------------------------------------------------
@@ -19,9 +19,16 @@ class Instrument:
 
     :param asset_type: Schwab asset classification.
     :param symbol: Ticker symbol.
+    :param description: Human-readable description (e.g. fund name).
+    :param cusip: CUSIP identifier.
+    :param instrument_type: Sub-type within the asset class
+        (e.g. ``EXCHANGE_TRADED_FUND``, ``VANILLA``).
     """
     asset_type: AssetType
     symbol: str
+    description: str
+    cusip: str = ""
+    instrument_type: InstrumentType | None = None
 
 
 @dataclass(slots=True, frozen=True)

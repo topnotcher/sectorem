@@ -15,6 +15,29 @@ class AssetType(enum.Enum):
     FIXED_INCOME = "FIXED_INCOME"
     CURRENCY = "CURRENCY"
     COLLECTIVE_INVESTMENT = "COLLECTIVE_INVESTMENT"
+    FUTURE = "FUTURE"
+    FOREX = "FOREX"
+    PRODUCT = "PRODUCT"
+
+
+class InstrumentType(enum.Enum):
+    """Instrument sub-type within an asset class."""
+    # CollectiveInvestment
+    EXCHANGE_TRADED_FUND = "EXCHANGE_TRADED_FUND"
+    UNIT_INVESTMENT_TRUST = "UNIT_INVESTMENT_TRUST"
+    CLOSED_END_FUND = "CLOSED_END_FUND"
+    INDEX = "INDEX"
+    UNITS = "UNITS"
+    # Option
+    VANILLA = "VANILLA"
+    BINARY = "BINARY"
+    BARRIER = "BARRIER"
+    # CashEquivalent
+    SWEEP_VEHICLE = "SWEEP_VEHICLE"
+    SAVINGS = "SAVINGS"
+    MONEY_MARKET_FUND = "MONEY_MARKET_FUND"
+    # Shared
+    UNKNOWN = "UNKNOWN"
 
 
 class OptionRight(enum.Enum):

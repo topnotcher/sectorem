@@ -6,7 +6,7 @@ from datetime import date
 
 import pytest
 
-from sectorem.trader.constants import AssetType, OptionRight
+from sectorem.trader.constants import AssetType, InstrumentType, OptionRight
 from sectorem.trader.parse import parse_position, _parse_occ_symbol
 from sectorem.trader.types import (
     CollectiveInvestmentPosition,
@@ -44,8 +44,8 @@ class TestParsePosition:
         raw = {
             "shortQuantity": 0.0,
             "longQuantity": 1000.0,
+            "averagePrice": 50.64718,
             "currentDayProfitLoss": -210.0,
-            "taxLotAverageLongPrice": 50.64718,
             "longOpenProfitLoss": -28087.18,
             "marketValue": 22560.0,
             "instrument": {
@@ -60,6 +60,8 @@ class TestParsePosition:
         assert isinstance(pos, EquityPosition)
         assert pos.instrument.symbol == "SMCI"
         assert pos.instrument.asset_type == AssetType.EQUITY
+        assert pos.instrument.description == "SMCI"
+        assert pos.instrument.instrument_type is None
         assert pos.quantity == 1000.0
         assert pos.average_price == 50.64718
         assert pos.market_value == 22560.0
@@ -70,8 +72,8 @@ class TestParsePosition:
         raw = {
             "shortQuantity": 12.0,
             "longQuantity": 0.0,
+            "averagePrice": 4.0533666667,
             "currentDayProfitLoss": -16.08,
-            "taxLotAverageShortPrice": 4.0533666667,
             "shortOpenProfitLoss": 4540.04,
             "marketValue": -324.0,
             "instrument": {
@@ -90,6 +92,8 @@ class TestParsePosition:
         assert isinstance(pos, OptionPosition)
         assert isinstance(pos.instrument, OptionInstrument)
         assert pos.instrument.symbol == "CLSK"
+        assert pos.instrument.description == "CLEANSPARK INC 06/18/2026 $15 Call"
+        assert pos.instrument.instrument_type == InstrumentType.VANILLA
         assert pos.instrument.strike == 15.0
         assert pos.instrument.right == OptionRight.CALL
         assert pos.instrument.expiration == date(2026, 6, 18)
@@ -101,8 +105,8 @@ class TestParsePosition:
         raw = {
             "shortQuantity": 0.0,
             "longQuantity": 20.0,
+            "averagePrice": 1.38561,
             "currentDayProfitLoss": 69.0,
-            "taxLotAverageLongPrice": 1.38561,
             "longOpenProfitLoss": -1071.22,
             "marketValue": 1700.0,
             "instrument": {
@@ -129,8 +133,8 @@ class TestParsePosition:
         raw = {
             "shortQuantity": 0.0,
             "longQuantity": 100.0396,
+            "averagePrice": 32.706,
             "currentDayProfitLoss": 41.917,
-            "taxLotAverageLongPrice": 32.706,
             "longOpenProfitLoss": -506.815,
             "marketValue": 2765.09,
             "instrument": {
@@ -146,14 +150,16 @@ class TestParsePosition:
         assert isinstance(pos, CollectiveInvestmentPosition)
         assert pos.instrument.symbol == "QDTE"
         assert pos.instrument.asset_type == AssetType.COLLECTIVE_INVESTMENT
+        assert pos.instrument.description == "ROUNDHL INVN 100 0DTE COV CL ETF"
+        assert pos.instrument.instrument_type == InstrumentType.EXCHANGE_TRADED_FUND
         assert pos.quantity == 100.0396
 
     def test_occ_symbol_roundtrip(self):
         raw = {
             "shortQuantity": 0.0,
             "longQuantity": 20.0,
+            "averagePrice": 1.38561,
             "currentDayProfitLoss": 69.0,
-            "taxLotAverageLongPrice": 1.38561,
             "longOpenProfitLoss": -1071.22,
             "marketValue": 1700.0,
             "instrument": {
@@ -173,8 +179,8 @@ class TestParsePosition:
         raw = {
             "shortQuantity": 0.0,
             "longQuantity": 0.0,
+            "averagePrice": 0.0,
             "currentDayProfitLoss": 0.0,
-            "taxLotAverageLongPrice": 0.0,
             "longOpenProfitLoss": 0.0,
             "marketValue": 0.0,
             "instrument": {

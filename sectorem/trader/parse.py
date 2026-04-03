@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import enum
 from datetime import date
+from typing import Any
 
-from .constants import AssetType, OptionRight
+from .constants import AssetType, InstrumentType, OptionRight
 from .types import (
     CashEquivalentPosition,
     CollectiveInvestmentPosition,
@@ -41,12 +43,12 @@ def parse_position(raw: dict) -> Position:
 
     if raw["shortQuantity"] > 0:
         quantity = -raw["shortQuantity"]
-        average_price = raw.get("taxLotAverageShortPrice", 0.0)
         open_profit_loss = raw.get("shortOpenProfitLoss", 0.0)
     else:
         quantity = raw["longQuantity"]
-        average_price = raw.get("taxLotAverageLongPrice", 0.0)
         open_profit_loss = raw.get("longOpenProfitLoss", 0.0)
+
+    average_price = raw.get("averagePrice", 0.0)
 
     pos_cls = _POSITION_CLASS.get(asset_type, Position)
     return pos_cls(
@@ -66,7 +68,16 @@ def _parse_instrument(raw: dict, asset_type: AssetType) -> Instrument:
     if asset_type == AssetType.OPTION:
         return _parse_option_instrument(raw)
 
-    return Instrument(asset_type=asset_type, symbol=raw["symbol"])
+    instrument_type = _parse_nullable_enum(InstrumentType, raw.get("type"))
+    symbol = raw["symbol"]
+
+    return Instrument(
+        asset_type=asset_type,
+        symbol=symbol,
+        description=raw.get("description") or symbol,
+        cusip=raw.get("cusip", ""),
+        instrument_type=instrument_type,
+    )
 
 
 def _parse_option_instrument(raw: dict) -> OptionInstrument:
@@ -83,14 +94,28 @@ def _parse_option_instrument(raw: dict) -> OptionInstrument:
 
     strike, expiration = _parse_occ_symbol(occ_symbol)
 
+    instrument_type = _parse_nullable_enum(InstrumentType, raw.get("type"))
+
     return OptionInstrument(
         asset_type=AssetType.OPTION,
         symbol=underlying,
+        description=raw.get("description") or f'{underlying} {expiration} ${strike} {right.value}',
+        cusip=raw.get("cusip", ""),
+        instrument_type=instrument_type,
         strike=strike,
         right=right,
         expiration=expiration,
         multiplier=multiplier,
     )
+
+
+def _parse_nullable_enum[T: enum.Enum](enum_cls: type[T], raw_value: Any) -> T|  None:
+    """Convert a raw value to an enum value, or None."""
+    try:
+        return enum_cls(raw_value)
+
+    except ValueError:
+        return None
 
 
 def _parse_occ_symbol(occ: str) -> tuple[float, date]:
