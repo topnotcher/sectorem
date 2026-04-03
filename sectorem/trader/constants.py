@@ -20,6 +20,12 @@ class AssetType(enum.Enum):
     PRODUCT = "PRODUCT"
 
 
+class AccountType(enum.Enum):
+    """Schwab account type."""
+    MARGIN = "MARGIN"
+    CASH = "CASH"
+
+
 class InstrumentType(enum.Enum):
     """Instrument sub-type within an asset class."""
     # CollectiveInvestment

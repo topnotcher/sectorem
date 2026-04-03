@@ -6,12 +6,22 @@ from datetime import date
 
 import pytest
 
-from sectorem.trader.constants import AssetType, InstrumentType, OptionRight
-from sectorem.trader.parse import parse_position, _parse_occ_symbol
+from sectorem.errors import InvalidApiResponseError
+from sectorem.trader.constants import AccountType, AssetType, InstrumentType, OptionRight
+from sectorem.trader.parse import (
+    parse_balance,
+    parse_initial_balance,
+    parse_position,
+    _parse_occ_symbol,
+)
 from sectorem.trader.types import (
+    CashBalance,
+    CashInitialBalance,
     CollectiveInvestmentPosition,
     EquityPosition,
     Instrument,
+    MarginBalance,
+    MarginInitialBalance,
     OptionInstrument,
     OptionPosition,
 )
@@ -174,8 +184,6 @@ class TestParsePosition:
 
     def test_empty_positions(self):
         """Positions list is empty when no positions key exists."""
-        # This tests the Account.get_positions level, not parse_position directly,
-        # but parse_position handles individual items — just verify no crash on valid input.
         raw = {
             "shortQuantity": 0.0,
             "longQuantity": 0.0,
@@ -190,3 +198,201 @@ class TestParsePosition:
         }
         pos = parse_position(raw)
         assert pos.quantity == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Margin balance fixtures (based on real API snapshots)
+# ---------------------------------------------------------------------------
+
+_MARGIN_CURRENT_RAW = {
+    "accruedInterest": 0.0,
+    "availableFunds": 85329.15,
+    "availableFundsNonMarginableTrade": 84329.15,
+    "bondValue": 0.0,
+    "buyingPower": 255977.74,
+    "buyingPowerNonMarginableTrade": 84328.15,
+    "cashBalance": 2173.26,
+    "cashReceipts": 1000.0,
+    "dayTradingBuyingPower": 409413.0,
+    "equity": 229198.23,
+    "equityPercentage": 100.0,
+    "liquidationValue": 170455.79,
+    "longMarginValue": 227024.97,
+    "longMarketValue": 230903.03,
+    "longOptionMarketValue": 1600.0,
+    "maintenanceCall": 0.0,
+    "maintenanceRequirement": 143867.8,
+    "marginBalance": 0.0,
+    "moneyMarketFund": 0.0,
+    "mutualFundValue": 0.0,
+    "pendingDeposits": 1000.0,
+    "regTCall": 0.0,
+    "savings": 0.0,
+    "shortBalance": 0.0,
+    "shortMarginValue": 0.0,
+    "shortMarketValue": 0.0,
+    "shortOptionMarketValue": -64220.5,
+    "sma": 127990.15,
+}
+
+_MARGIN_PROJECTED_RAW = {
+    "availableFunds": 85328.15,
+    "availableFundsNonMarginableTrade": 84328.15,
+    "buyingPower": 255976.74,
+    "dayTradingBuyingPower": 409413.0,
+    "dayTradingBuyingPowerCall": 0.0,
+    "isInCall": False,
+    "maintenanceCall": 0.0,
+    "regTCall": 0.0,
+    "stockBuyingPower": 255976.74,
+}
+
+_MARGIN_INITIAL_RAW = {
+    "accruedInterest": 0.0,
+    "availableFundsNonMarginableTrade": 79365.0,
+    "bondValue": 321458.0,
+    "buyingPower": 256730.0,
+    "cashAvailableForTrading": 0.0,
+    "cashBalance": 2924.2,
+    "cashReceipts": 1000.0,
+    "dayTradingBuyingPower": 409413.0,
+    "dayTradingBuyingPowerCall": 0.0,
+    "dayTradingEquityCall": 0.0,
+    "equity": 162511.9,
+    "equityPercentage": 70.0,
+    "isInCall": False,
+    "liquidationValue": 162561.98,
+    "longMarginValue": 220944.25,
+    "longOptionMarketValue": 1800.0,
+    "longStockValue": 220944.25,
+    "maintenanceCall": 0.0,
+    "maintenanceRequirement": 143504.0,
+    "marginBalance": 0.0,
+    "marginEquity": 223868.45,
+    "moneyMarketFund": 0.0,
+    "mutualFundValue": 80365.0,
+    "pendingDeposits": 1000.0,
+    "regTCall": 0.0,
+    "shortBalance": 0.0,
+    "shortMarginValue": 0.0,
+    "shortOptionMarketValue": -65350.55,
+    "shortStockValue": -65350.55,
+    "totalCash": 0.0,
+}
+
+
+class TestParseMarginBalance:
+    def test_parses_current_and_projected(self):
+        bal = parse_balance(_MARGIN_CURRENT_RAW, _MARGIN_PROJECTED_RAW, AccountType.MARGIN)
+
+        assert isinstance(bal, MarginBalance)
+        # From current
+        assert bal.buying_power == 255977.74
+        assert bal.equity == 229198.23
+        assert bal.liquidation_value == 170455.79
+        assert bal.sma == 127990.15
+        assert bal.margin_balance == 0.0
+        assert bal.short_option_market_value == -64220.5
+        # From projected
+        assert bal.is_in_call is False
+        assert bal.stock_buying_power == 255976.74
+        assert bal.day_trading_buying_power_call == 0.0
+
+    def test_extra_fields_ignored(self):
+        current = {**_MARGIN_CURRENT_RAW, "someNewField": 42.0}
+        projected = {**_MARGIN_PROJECTED_RAW, "anotherNewField": 99.0}
+        bal = parse_balance(current, projected, AccountType.MARGIN)
+        assert isinstance(bal, MarginBalance)
+
+    def test_missing_current_field_raises(self):
+        current = {k: v for k, v in _MARGIN_CURRENT_RAW.items() if k != "equity"}
+        with pytest.raises(InvalidApiResponseError, match="equity"):
+            parse_balance(current, _MARGIN_PROJECTED_RAW, AccountType.MARGIN)
+
+    def test_missing_projected_field_raises(self):
+        projected = {k: v for k, v in _MARGIN_PROJECTED_RAW.items() if k != "isInCall"}
+        with pytest.raises(InvalidApiResponseError, match="isInCall"):
+            parse_balance(_MARGIN_CURRENT_RAW, projected, AccountType.MARGIN)
+
+
+class TestParseMarginInitialBalance:
+    def test_parses(self):
+        bal = parse_initial_balance(_MARGIN_INITIAL_RAW, AccountType.MARGIN)
+
+        assert isinstance(bal, MarginInitialBalance)
+        assert bal.liquidation_value == 162561.98
+        assert bal.equity == 162511.9
+        assert bal.buying_power == 256730.0
+        assert bal.is_in_call is False
+        assert bal.margin_equity == 223868.45
+        assert bal.total_cash == 0.0
+
+    def test_extra_fields_ignored(self):
+        raw = {**_MARGIN_INITIAL_RAW, "accountValue": 162561.98, "margin": 2924.2}
+        bal = parse_initial_balance(raw, AccountType.MARGIN)
+        assert isinstance(bal, MarginInitialBalance)
+
+    def test_missing_field_raises(self):
+        raw = {k: v for k, v in _MARGIN_INITIAL_RAW.items() if k != "isInCall"}
+        with pytest.raises(InvalidApiResponseError, match="isInCall"):
+            parse_initial_balance(raw, AccountType.MARGIN)
+
+
+class TestParseCashBalance:
+    _CASH_CURRENT_RAW = {
+        "cashAvailableForTrading": 5000.0,
+        "cashAvailableForWithdrawal": 4000.0,
+        "cashCall": 0.0,
+        "cashDebitCallValue": 0.0,
+        "longNonMarginableMarketValue": 3000.0,
+        "totalCash": 5000.0,
+        "unsettledCash": 1000.0,
+    }
+
+    def test_parses(self):
+        bal = parse_balance(self._CASH_CURRENT_RAW, {}, AccountType.CASH)
+
+        assert isinstance(bal, CashBalance)
+        assert bal.cash_available_for_trading == 5000.0
+        assert bal.total_cash == 5000.0
+        assert bal.unsettled_cash == 1000.0
+
+    def test_missing_field_raises(self):
+        raw = {k: v for k, v in self._CASH_CURRENT_RAW.items() if k != "totalCash"}
+        with pytest.raises(InvalidApiResponseError, match="totalCash"):
+            parse_balance(raw, {}, AccountType.CASH)
+
+
+class TestParseCashInitialBalance:
+    _CASH_INITIAL_RAW = {
+        "accruedInterest": 0.0,
+        "bondValue": 0.0,
+        "cashAvailableForTrading": 5000.0,
+        "cashAvailableForWithdrawal": 4000.0,
+        "cashBalance": 5000.0,
+        "cashDebitCallValue": 0.0,
+        "cashReceipts": 0.0,
+        "isInCall": False,
+        "liquidationValue": 8000.0,
+        "longOptionMarketValue": 0.0,
+        "longStockValue": 3000.0,
+        "moneyMarketFund": 0.0,
+        "mutualFundValue": 0.0,
+        "pendingDeposits": 0.0,
+        "shortOptionMarketValue": 0.0,
+        "shortStockValue": 0.0,
+        "unsettledCash": 1000.0,
+    }
+
+    def test_parses(self):
+        bal = parse_initial_balance(self._CASH_INITIAL_RAW, AccountType.CASH)
+
+        assert isinstance(bal, CashInitialBalance)
+        assert bal.liquidation_value == 8000.0
+        assert bal.is_in_call is False
+        assert bal.cash_balance == 5000.0
+
+    def test_missing_field_raises(self):
+        raw = {k: v for k, v in self._CASH_INITIAL_RAW.items() if k != "isInCall"}
+        with pytest.raises(InvalidApiResponseError, match="isInCall"):
+            parse_initial_balance(raw, AccountType.CASH)

@@ -3,23 +3,38 @@
 from __future__ import annotations
 
 import enum
+import logging
 from datetime import date
 from typing import Any
 
-from .constants import AssetType, InstrumentType, OptionRight
+from ..errors import InvalidApiResponseError
+from .constants import AccountType, AssetType, InstrumentType, OptionRight
 from .types import (
+    Balance,
+    CashBalance,
     CashEquivalentPosition,
+    CashInitialBalance,
     CollectiveInvestmentPosition,
     CurrencyPosition,
     EquityPosition,
     FixedIncomePosition,
     IndexPosition,
+    InitialBalance,
     Instrument,
+    MarginBalance,
+    MarginInitialBalance,
     MutualFundPosition,
     OptionInstrument,
     OptionPosition,
     Position,
 )
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Positions
+# ---------------------------------------------------------------------------
 
 _POSITION_CLASS: dict[AssetType, type[Position]] = {
     AssetType.EQUITY: EquityPosition,
@@ -109,7 +124,7 @@ def _parse_option_instrument(raw: dict) -> OptionInstrument:
     )
 
 
-def _parse_nullable_enum[T: enum.Enum](enum_cls: type[T], raw_value: Any) -> T|  None:
+def _parse_nullable_enum[T: enum.Enum](enum_cls: type[T], raw_value: Any) -> T | None:
     """Convert a raw value to an enum value, or None."""
     try:
         return enum_cls(raw_value)
@@ -117,6 +132,181 @@ def _parse_nullable_enum[T: enum.Enum](enum_cls: type[T], raw_value: Any) -> T| 
     except ValueError:
         return None
 
+
+# ---------------------------------------------------------------------------
+# Balances — field maps
+#
+# Each map is {api_field_name: dataclass_field_name}. These are the
+# authoritative list of fields we expect from the API. Missing fields
+# raise InvalidApiResponseError; extra fields are silently ignored.
+# ---------------------------------------------------------------------------
+
+_MARGIN_CURRENT_FIELDS: dict[str, str] = {
+    "accruedInterest": "accrued_interest",
+    "availableFunds": "available_funds",
+    "availableFundsNonMarginableTrade": "available_funds_non_marginable_trade",
+    "bondValue": "bond_value",
+    "buyingPower": "buying_power",
+    "buyingPowerNonMarginableTrade": "buying_power_non_marginable_trade",
+    "cashBalance": "cash_balance",
+    "cashReceipts": "cash_receipts",
+    "dayTradingBuyingPower": "day_trading_buying_power",
+    "equity": "equity",
+    "equityPercentage": "equity_percentage",
+    "liquidationValue": "liquidation_value",
+    "longMarginValue": "long_margin_value",
+    "longMarketValue": "long_market_value",
+    "longOptionMarketValue": "long_option_market_value",
+    "maintenanceCall": "maintenance_call",
+    "maintenanceRequirement": "maintenance_requirement",
+    "marginBalance": "margin_balance",
+    "moneyMarketFund": "money_market_fund",
+    "mutualFundValue": "mutual_fund_value",
+    "pendingDeposits": "pending_deposits",
+    "regTCall": "reg_t_call",
+    "savings": "savings",
+    "shortBalance": "short_balance",
+    "shortMarginValue": "short_margin_value",
+    "shortMarketValue": "short_market_value",
+    "shortOptionMarketValue": "short_option_market_value",
+    "sma": "sma",
+}
+
+_MARGIN_PROJECTED_FIELDS: dict[str, str] = {
+    "dayTradingBuyingPowerCall": "day_trading_buying_power_call",
+    "isInCall": "is_in_call",
+    "stockBuyingPower": "stock_buying_power",
+}
+
+_MARGIN_INITIAL_FIELDS: dict[str, str] = {
+    "accruedInterest": "accrued_interest",
+    "availableFundsNonMarginableTrade": "available_funds_non_marginable_trade",
+    "bondValue": "bond_value",
+    "buyingPower": "buying_power",
+    "cashAvailableForTrading": "cash_available_for_trading",
+    "cashBalance": "cash_balance",
+    "cashReceipts": "cash_receipts",
+    "dayTradingBuyingPower": "day_trading_buying_power",
+    "dayTradingBuyingPowerCall": "day_trading_buying_power_call",
+    "dayTradingEquityCall": "day_trading_equity_call",
+    "equity": "equity",
+    "equityPercentage": "equity_percentage",
+    "isInCall": "is_in_call",
+    "liquidationValue": "liquidation_value",
+    "longMarginValue": "long_margin_value",
+    "longOptionMarketValue": "long_option_market_value",
+    "longStockValue": "long_stock_value",
+    "maintenanceCall": "maintenance_call",
+    "maintenanceRequirement": "maintenance_requirement",
+    "marginBalance": "margin_balance",
+    "marginEquity": "margin_equity",
+    "moneyMarketFund": "money_market_fund",
+    "mutualFundValue": "mutual_fund_value",
+    "pendingDeposits": "pending_deposits",
+    "regTCall": "reg_t_call",
+    "shortBalance": "short_balance",
+    "shortMarginValue": "short_margin_value",
+    "shortOptionMarketValue": "short_option_market_value",
+    "shortStockValue": "short_stock_value",
+    "totalCash": "total_cash",
+}
+
+_CASH_CURRENT_FIELDS: dict[str, str] = {
+    "cashAvailableForTrading": "cash_available_for_trading",
+    "cashAvailableForWithdrawal": "cash_available_for_withdrawal",
+    "cashCall": "cash_call",
+    "cashDebitCallValue": "cash_debit_call_value",
+    "longNonMarginableMarketValue": "long_non_marginable_market_value",
+    "totalCash": "total_cash",
+    "unsettledCash": "unsettled_cash",
+}
+
+_CASH_INITIAL_FIELDS: dict[str, str] = {
+    "accruedInterest": "accrued_interest",
+    "bondValue": "bond_value",
+    "cashAvailableForTrading": "cash_available_for_trading",
+    "cashAvailableForWithdrawal": "cash_available_for_withdrawal",
+    "cashBalance": "cash_balance",
+    "cashDebitCallValue": "cash_debit_call_value",
+    "cashReceipts": "cash_receipts",
+    "isInCall": "is_in_call",
+    "liquidationValue": "liquidation_value",
+    "longOptionMarketValue": "long_option_market_value",
+    "longStockValue": "long_stock_value",
+    "moneyMarketFund": "money_market_fund",
+    "mutualFundValue": "mutual_fund_value",
+    "pendingDeposits": "pending_deposits",
+    "shortOptionMarketValue": "short_option_market_value",
+    "shortStockValue": "short_stock_value",
+    "unsettledCash": "unsettled_cash",
+}
+
+
+# ---------------------------------------------------------------------------
+# Balance parsing
+# ---------------------------------------------------------------------------
+
+def _extract_fields(raw: dict, field_map: dict[str, str], label: str) -> dict[str, Any]:
+    """
+    Extract fields from a raw API dict using a field map.
+
+    :raises InvalidApiResponseError: If any expected fields are missing.
+    """
+    kwargs: dict[str, Any] = {}
+    missing: list[str] = []
+
+    for api_field, py_field in field_map.items():
+        if api_field in raw:
+            kwargs[py_field] = raw[api_field]
+        else:
+            missing.append(api_field)
+
+    if missing:
+        raise InvalidApiResponseError(
+            f"Missing fields in {label}: {', '.join(missing)}"
+        )
+
+    return kwargs
+
+
+def parse_balance(
+    current_raw: dict,
+    projected_raw: dict,
+    account_type: AccountType,
+) -> Balance:
+    """
+    Parse current balances from the ``currentBalances`` and ``projectedBalances``
+    sections of a Schwab account response.
+
+    :raises InvalidApiResponseError: If any expected fields are missing.
+    """
+    if account_type == AccountType.MARGIN:
+        kwargs = _extract_fields(current_raw, _MARGIN_CURRENT_FIELDS, "margin currentBalances")
+        kwargs.update(_extract_fields(projected_raw, _MARGIN_PROJECTED_FIELDS, "margin projectedBalances"))
+        return MarginBalance(**kwargs)
+
+    kwargs = _extract_fields(current_raw, _CASH_CURRENT_FIELDS, "cash currentBalances")
+    return CashBalance(**kwargs)
+
+
+def parse_initial_balance(raw: dict, account_type: AccountType) -> InitialBalance:
+    """
+    Parse initial (start-of-day) balances from the ``initialBalances``
+    section of a Schwab account response.
+
+    :raises InvalidApiResponseError: If any expected fields are missing.
+    """
+    if account_type == AccountType.MARGIN:
+        kwargs = _extract_fields(raw, _MARGIN_INITIAL_FIELDS, "margin initialBalances")
+        return MarginInitialBalance(**kwargs)
+
+    kwargs = _extract_fields(raw, _CASH_INITIAL_FIELDS, "cash initialBalances")
+    return CashInitialBalance(**kwargs)
+
+
+# ---------------------------------------------------------------------------
+# OCC symbol parsing
+# ---------------------------------------------------------------------------
 
 def _parse_occ_symbol(occ: str) -> tuple[float, date]:
     """
