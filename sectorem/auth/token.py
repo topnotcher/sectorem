@@ -137,5 +137,9 @@ class FileTokenStore(TokenStore):
 
     async def save(self, token: Token) -> None:
         await aiofiles.os.makedirs(self._path.parent, exist_ok=True)
-        async with aiofiles.open(self._path, "w", encoding="utf-8") as f:
+        tmp = self._path.with_suffix(".tmp")
+
+        async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
             await f.write(json.dumps(token.to_dict(), indent=2))
+
+        await aiofiles.os.rename(tmp, self._path)
