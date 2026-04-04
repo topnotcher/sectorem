@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, PropertyMock
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
@@ -16,7 +16,7 @@ from sectorem.market import MarketDataClient
 @pytest_asyncio.fixture
 async def mock_auth():
     auth = AsyncMock(spec=AuthProvider)
-    type(auth).access_token = PropertyMock(return_value="test-token")
+    auth.get_access_token = AsyncMock(return_value="test-token")
     session = aiohttp.ClientSession()
     auth.get_authenticated_session.return_value = session
     yield auth

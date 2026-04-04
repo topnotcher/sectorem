@@ -124,7 +124,7 @@ class TestAuthenticatorLifecycle:
         try:
             await asyncio.sleep(0.05)
             with pytest.raises(NotAuthenticatedError):
-                _ = auth.access_token
+                _ = await auth.get_access_token()
         finally:
             await auth.stop()
 
@@ -143,7 +143,7 @@ class TestAuthenticatorLifecycle:
         try:
             await asyncio.sleep(0.05)
             assert auth.state == AuthState.READY
-            assert auth.access_token == "valid-access"
+            assert await auth.get_access_token() == "valid-access"
         finally:
             await auth.stop()
 
@@ -167,7 +167,7 @@ class TestAuthenticatorLifecycle:
             try:
                 await asyncio.sleep(0.05)
                 assert auth.state == AuthState.READY
-                assert auth.access_token == "new-access"
+                assert await auth.get_access_token() == "new-access"
                 mock_req.assert_called_once()
             finally:
                 await auth.stop()
@@ -215,7 +215,7 @@ class TestAuthenticatorLifecycle:
             await servers[0].simulate_redirect({"code": "auth-code-123"})
 
             assert auth.state == AuthState.READY
-            assert auth.access_token == "new-access"
+            assert await auth.get_access_token() == "new-access"
             assert store.token is not None
             await auth.stop()
 
@@ -242,7 +242,7 @@ class TestAuthenticatorLifecycle:
             task = asyncio.create_task(activate_later())
             await asyncio.wait_for(auth.wait(), timeout=2)
             assert auth.state == AuthState.READY
-            assert auth.access_token == "new-access"
+            assert await auth.get_access_token() == "new-access"
             await task
             await auth.stop()
 

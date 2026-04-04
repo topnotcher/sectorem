@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, PropertyMock
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
@@ -21,7 +21,7 @@ async def mock_auth():
     a real :class:`aiohttp.ClientSession`.
     """
     auth = AsyncMock(spec=AuthProvider)
-    type(auth).access_token = PropertyMock(return_value="test-token-123")
+    auth.get_access_token = AsyncMock(return_value="test-token-123")
     session = aiohttp.ClientSession()
     auth.get_authenticated_session.return_value = session
     yield auth

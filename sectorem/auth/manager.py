@@ -55,11 +55,10 @@ class AuthProvider:
     def __init__(self) -> None:
         self._api_session: ClientSession | None = None
 
-    @property
     @abstractmethod
-    def access_token(self) -> str:
+    async def get_access_token(self) -> str:
         """
-        Current access token.
+        Get the current access token.
 
         :raises NotAuthenticatedError: If no valid token is available.
         """
@@ -72,7 +71,7 @@ class AuthProvider:
         """Wait until authentication is established."""
 
     async def _auth_middleware(self, req: ClientRequest, handler: ClientHandlerType) -> ClientResponse:
-        req.headers["Authorization"] = f'Bearer {self.access_token}'
+        req.headers["Authorization"] = f'Bearer {await self.get_access_token()}'
         return await handler(req)
 
     def get_authenticated_session(self) -> ClientSession:
@@ -80,8 +79,8 @@ class AuthProvider:
         Get a shared :class:`aiohttp.ClientSession` that automatically
         injects the Bearer token into every request.
 
-        Always returns the same session instance.  The session is
-        closed when :meth:`stop` is called.
+        Always returns the same session instance. The session is
+        closed when ``stop()`` is called.
         """
         if self._api_session is None:
             self._api_session = ClientSession(middlewares=(self._auth_middleware,))
@@ -147,10 +146,9 @@ class Authenticator(AuthProvider):
     def state(self) -> AuthState:
         return self._state
 
-    @property
-    def access_token(self) -> str:
+    async def get_access_token(self) -> str:
         """
-        Current access token.
+        Get the current access token.
 
         :raises NotAuthenticatedError: If no valid token is available.
         """
