@@ -67,7 +67,7 @@ class TraderClient(RestClient):
         Get user preferences.
 
         The response includes the streaming WebSocket URL needed
-        to connect the :class:`~sectorem.stream.StreamClient`.
+        to connect a streaming client.
         """
         return await self.get("userPreference")
 
