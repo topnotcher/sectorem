@@ -68,7 +68,6 @@ handles login, many services use the token), implement
 
     class RedisAuthProvider(AuthProvider):
         def __init__(self, redis):
-            super().__init__()
             self._redis = redis
 
         async def get_access_token(self) -> str:

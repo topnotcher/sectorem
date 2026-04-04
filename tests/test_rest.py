@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock
 
-import aiohttp
 import pytest
 import pytest_asyncio
 from aiohttp import web
@@ -16,16 +15,9 @@ from sectorem.rest import RestClient
 
 @pytest_asyncio.fixture
 async def mock_auth():
-    """
-    Mock Authenticator whose ``get_authenticated_session()`` returns
-    a real :class:`aiohttp.ClientSession`.
-    """
     auth = AsyncMock(spec=AuthProvider)
     auth.get_access_token = AsyncMock(return_value="test-token-123")
-    session = aiohttp.ClientSession()
-    auth.get_authenticated_session.return_value = session
-    yield auth
-    await session.close()
+    return auth
 
 
 class TestRequest:

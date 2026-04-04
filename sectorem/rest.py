@@ -6,6 +6,7 @@ import json
 import logging
 
 import aiohttp
+from aiohttp import ClientRequest, ClientResponse, ClientHandlerType, ClientSession
 from typing import Any
 
 from .auth import AuthProvider
@@ -30,12 +31,11 @@ class RestClient:
     Subclasses (e.g. ``TraderClient``, ``MarketDataClient``) add
     endpoint-specific methods on top.
 
-    Authentication and session management are delegated to the
-    :class:`~sectorem.auth.AuthProvider`: the session returned by
-    :meth:`~sectorem.auth.AuthProvider.get_authenticated_session`
-    automatically injects the Bearer token into every request.
+    Each client owns its own :class:`aiohttp.ClientSession` that
+    automatically injects the Bearer token into every request via
+    the :class:`~sectorem.auth.AuthProvider`.
 
-    :param auth: Auth provider supplying the authenticated session.
+    :param auth: Auth provider supplying the access token.
     :param base_url: API base URL (e.g.
         ``https://api.schwabapi.com/trader/v1``).
     """
@@ -43,6 +43,22 @@ class RestClient:
     def __init__(self, auth: AuthProvider, base_url: str) -> None:
         self._auth = auth
         self._base_url = base_url.rstrip("/")
+        self._session: ClientSession | None = None
+
+    async def _get_session(self) -> ClientSession:
+        if self._session is None:
+            self._session = ClientSession(middlewares=(self._auth_middleware,))
+        return self._session
+
+    async def _auth_middleware(self, req: ClientRequest, handler: ClientHandlerType) -> ClientResponse:
+        req.headers["Authorization"] = f'Bearer {await self._auth.get_access_token()}'
+        return await handler(req)
+
+    async def close(self) -> None:
+        """Close the underlying HTTP session."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
         """
@@ -59,7 +75,7 @@ class RestClient:
         :raises RateLimitError: On HTTP 429.
         """
         url = f"{self._base_url}/{path.lstrip('/')}"
-        session = self._auth.get_authenticated_session()
+        session = await self._get_session()
 
         async with session.request(method, url, **kwargs) as resp:
             if resp.status >= 400:

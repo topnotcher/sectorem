@@ -6,12 +6,12 @@ import asyncio
 import enum
 import logging
 from collections.abc import Callable, Coroutine
-from abc import abstractmethod
+from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlencode
 
 import aiohttp
-from aiohttp import ClientResponse, ClientSession, ClientRequest, ClientHandlerType
+from aiohttp import ClientSession
 
 from ..errors import AuthenticationError, NotAuthenticatedError
 from .server import CallbackServer, ServerFactory, localhost_server
@@ -42,18 +42,18 @@ class AuthState(enum.Enum):
     READY = enum.auto()
 
 
-class AuthProvider:
+class AuthProvider(ABC):
     """
-    Abstract base class for authentication providers.
+    Abstract base for authentication providers.
 
-    This is the interface for obtaining an access token and an authenticated session. The :class:`Authenticator`
-    implements the full OAuth2 flow and token lifecycle management, but other implementations may be used. For example,
-    an :class:`Authenticator` instance could run separately with a means to share tokens implemented via a
-    :class:`~.AuthProvider` subclass that reads/writes tokens from a shared database or cache.
+    The only requirement is :meth:`get_access_token`. The
+    :class:`Authenticator` implements the full OAuth2 flow, but
+    simpler implementations (e.g. reading a token from Redis) work
+    just as well.
+
+    The ``start``/``stop``/``wait`` hooks are no-ops by default;
+    override them if your provider has its own lifecycle.
     """
-
-    def __init__(self) -> None:
-        self._api_session: ClientSession | None = None
 
     @abstractmethod
     async def get_access_token(self) -> str:
@@ -65,31 +65,19 @@ class AuthProvider:
         ...
 
     async def start(self) -> None:
-        """Start the authenticator."""
-
-    async def wait(self) -> None:
-        """Wait until authentication is established."""
-
-    async def _auth_middleware(self, req: ClientRequest, handler: ClientHandlerType) -> ClientResponse:
-        req.headers["Authorization"] = f'Bearer {await self.get_access_token()}'
-        return await handler(req)
-
-    def get_authenticated_session(self) -> ClientSession:
-        """
-        Get a shared :class:`aiohttp.ClientSession` that automatically
-        injects the Bearer token into every request.
-
-        Always returns the same session instance. The session is
-        closed when ``stop()`` is called.
-        """
-        if self._api_session is None:
-            self._api_session = ClientSession(middlewares=(self._auth_middleware,))
-        return self._api_session
+        """Start the auth provider."""
 
     async def stop(self) -> None:
-        if self._api_session is not None:
-            await self._api_session.close()
-            self._api_session = None
+        """Stop the auth provider and release resources."""
+
+    async def wait(self) -> None:
+        """
+        Wait until authentication is established.
+
+        This is typically called once at application start to avoid any API calls
+        before authentication is ready. After authentication is ready initially,
+        :meth:`~.get_access_token` may raise an exception rather than waiting.
+        """
 
 
 class Authenticator(AuthProvider):

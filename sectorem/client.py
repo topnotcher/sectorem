@@ -98,8 +98,12 @@ class SchwabClient:
 
     async def stop(self) -> None:
         """Stop the client and release all resources."""
-        self._trader = None
-        self._market = None
+        if self._trader is not None:
+            await self._trader.close()
+            self._trader = None
+        if self._market is not None:
+            await self._market.close()
+            self._market = None
         await self._auth.stop()
 
     async def __aenter__(self) -> SchwabClient:
