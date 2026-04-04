@@ -27,7 +27,7 @@ async def main():
             print(f"{acct}")
 
         for account in await client.trader.get_accounts():
-            print(f"\n--- Account Positions ({account.account_number}) ---")
+            print(f"\n--- Account Positions ({account.nickname} {account.account_number}) ---")
             positions = await account.get_positions()
             for position in positions:
                 print(position)

@@ -23,11 +23,23 @@ class TraderClient(RestClient):
     def __init__(self, auth: AuthProvider) -> None:
         super().__init__(auth, TRADER_BASE_URL)
         self._accounts: dict[str, str] = {}
+        self._preferences: dict | None = None
 
     async def _refresh_accounts(self) -> None:
         """Refresh the account number to hash mapping."""
         for acct in await self.get("accounts/accountNumbers"):
             self._accounts[acct["accountNumber"]] = acct["hashValue"]
+
+    async def _get_account_preferences(self, account_number: str) -> dict:
+        """Get the preferences dict for a single account."""
+        if self._preferences is None:
+            self._preferences = await self.get_user_preferences()
+
+        for acct in self._preferences.get("accounts", []):
+            if acct["accountNumber"] == account_number:
+                return acct
+
+        return {}
 
     async def get_account_hash(self, account_number: str) -> str:
         """
@@ -60,7 +72,8 @@ class TraderClient(RestClient):
         """Get a single account by account number."""
 
         account_hash = await self.get_account_hash(account)
-        return Account(self, account, account_hash)
+        prefs = await self._get_account_preferences(account)
+        return Account(self, account, account_hash, prefs)
 
     async def get_user_preferences(self) -> dict:
         """
@@ -79,9 +92,13 @@ class Account:
     This class should not be instantiated directly; use :meth:`~.TraderClient.get_account` instead.
     """
 
-    def __init__(self, client: TraderClient, account_number: str, account_hash: str) -> None:
-        #: The account number
+    def __init__(self, client: TraderClient, account_number: str, account_hash: str, prefs: dict) -> None:
+        #: The account number.
         self.account_number: str = account_number
+        #: Display name for the account (e.g. "Individual").
+        self.nickname: str | None = prefs.get("nickName")
+        #: Whether this is the primary account.
+        self.is_primary: bool = prefs.get("primaryAccount", False)
 
         self._account_hash: str = account_hash
         self._client: TraderClient = client

@@ -108,11 +108,19 @@ class TestAccountNumberResolution:
 class TestTraderClient:
     @pytest.mark.asyncio
     async def test_get_account_returns_account(self, mock_auth, aiohttp_server):
-        async def handler(request):
+        async def numbers_handler(request):
             return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
 
+        async def prefs_handler(request):
+            return web.json_response({
+                "accounts": [
+                    {"accountNumber": "123", "primaryAccount": True, "nickName": "Main"},
+                ],
+            })
+
         app = web.Application()
-        app.router.add_get("/trader/v1/accounts/accountNumbers", handler)
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         server = await aiohttp_server(app)
 
         client = TraderClient(mock_auth)
@@ -121,17 +129,28 @@ class TestTraderClient:
 
         assert isinstance(account, Account)
         assert account.account_number == "123"
+        assert account.nickname == "Main"
+        assert account.is_primary is True
 
     @pytest.mark.asyncio
     async def test_get_accounts_returns_all(self, mock_auth, aiohttp_server):
-        async def handler(request):
+        async def numbers_handler(request):
             return web.json_response([
                 {"accountNumber": "123", "hashValue": "abc"},
                 {"accountNumber": "456", "hashValue": "def"},
             ])
 
+        async def prefs_handler(request):
+            return web.json_response({
+                "accounts": [
+                    {"accountNumber": "123", "primaryAccount": True, "nickName": "Main"},
+                    {"accountNumber": "456", "primaryAccount": False, "nickName": "Trading"},
+                ],
+            })
+
         app = web.Application()
-        app.router.add_get("/trader/v1/accounts/accountNumbers", handler)
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         server = await aiohttp_server(app)
 
         client = TraderClient(mock_auth)
@@ -141,7 +160,11 @@ class TestTraderClient:
         assert len(accounts) == 2
         assert all(isinstance(a, Account) for a in accounts)
         assert accounts[0].account_number == "123"
+        assert accounts[0].nickname == "Main"
+        assert accounts[0].is_primary is True
         assert accounts[1].account_number == "456"
+        assert accounts[1].nickname == "Trading"
+        assert accounts[1].is_primary is False
 
     @pytest.mark.asyncio
     async def test_get_user_preferences(self, mock_auth, aiohttp_server):
@@ -168,6 +191,9 @@ class TestAccount:
         async def numbers_handler(request):
             return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
 
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
         async def account_handler(request):
             return web.json_response({
                 "securitiesAccount": {
@@ -192,6 +218,7 @@ class TestAccount:
 
         app = web.Application()
         app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         app.router.add_get("/trader/v1/accounts/abc", account_handler)
         server = await aiohttp_server(app)
 
@@ -215,6 +242,9 @@ class TestAccount:
     async def test_get_positions_option(self, mock_auth, aiohttp_server):
         async def numbers_handler(request):
             return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
 
         async def account_handler(request):
             return web.json_response({
@@ -244,6 +274,7 @@ class TestAccount:
 
         app = web.Application()
         app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         app.router.add_get("/trader/v1/accounts/abc", account_handler)
         server = await aiohttp_server(app)
 
@@ -268,6 +299,9 @@ class TestAccount:
     async def test_get_positions_collective_investment(self, mock_auth, aiohttp_server):
         async def numbers_handler(request):
             return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
 
         async def account_handler(request):
             return web.json_response({
@@ -294,6 +328,7 @@ class TestAccount:
 
         app = web.Application()
         app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         app.router.add_get("/trader/v1/accounts/abc", account_handler)
         server = await aiohttp_server(app)
 
@@ -313,11 +348,15 @@ class TestAccount:
         async def numbers_handler(request):
             return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
 
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
         async def account_handler(request):
             return web.json_response({"securitiesAccount": {}})
 
         app = web.Application()
         app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         app.router.add_get("/trader/v1/accounts/abc", account_handler)
         server = await aiohttp_server(app)
 
@@ -336,12 +375,16 @@ class TestAccount:
         async def numbers_handler(request):
             return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
 
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
         async def account_handler(request):
             received_params.update(request.query)
             return web.json_response({"securitiesAccount": {}})
 
         app = web.Application()
         app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
         app.router.add_get("/trader/v1/accounts/abc", account_handler)
         server = await aiohttp_server(app)
 
