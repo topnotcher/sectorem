@@ -238,7 +238,10 @@ class Authenticator(AuthProvider):
             if self._refresh_at() <= now:
                 await self._refresh_access_token()
 
-            next_wake = min(self._reauth_at(), self._refresh_at())
+            next_wake = self._refresh_at()
+            if self._reauth_at() < next_wake and not self._reauth_prompted:
+                next_wake = self._reauth_at()
+
             delay = max((next_wake - now).total_seconds(), 0)
             log.debug("Maintenance: sleeping %.0fs.", delay)
             await asyncio.sleep(delay)
