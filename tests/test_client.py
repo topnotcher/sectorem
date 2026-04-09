@@ -12,6 +12,16 @@ from sectorem.client import SchwabClient
 from sectorem.market import MarketDataClient
 from sectorem.trader import TraderClient
 
+FAKE_PREFS = {
+    "streamerInfo": [{
+        "streamerSocketUrl": "wss://example.com/stream",
+        "schwabClientCustomerId": "cust1",
+        "schwabClientCorrelId": "corr1",
+        "schwabClientChannel": "N9",
+        "schwabClientFunctionId": "ABCDE",
+    }],
+}
+
 
 @pytest.fixture
 def mock_auth():
@@ -19,6 +29,7 @@ def mock_auth():
     auth.start = AsyncMock()
     auth.stop = AsyncMock()
     auth.wait = AsyncMock()
+    auth.get_access_token = AsyncMock(return_value="test-token")
     return auth
 
 
@@ -71,11 +82,13 @@ class TestLazyProperties:
 
 class TestLifecycle:
     @pytest.mark.asyncio
-    async def test_start_starts_auth_and_waits(self, mock_auth):
+    async def test_start_starts_auth_and_waits(self, mock_auth, monkeypatch):
         client = SchwabClient(auth=mock_auth)
+        monkeypatch.setattr(client.trader, "get_user_preferences", AsyncMock(return_value=FAKE_PREFS))
         await client.start()
         mock_auth.start.assert_awaited_once()
         mock_auth.wait.assert_awaited_once()
+        assert client._stream is not None
 
     @pytest.mark.asyncio
     async def test_stop_cleans_up(self, mock_auth):
@@ -90,8 +103,10 @@ class TestLifecycle:
         mock_auth.stop.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_context_manager(self, mock_auth):
-        async with SchwabClient(auth=mock_auth) as client:
+    async def test_context_manager(self, mock_auth, monkeypatch):
+        client = SchwabClient(auth=mock_auth)
+        monkeypatch.setattr(client.trader, "get_user_preferences", AsyncMock(return_value=FAKE_PREFS))
+        async with client:
             assert isinstance(client, SchwabClient)
             mock_auth.start.assert_awaited_once()
 

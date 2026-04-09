@@ -6,6 +6,7 @@ from typing import Any
 
 from .auth import Authenticator, AuthProvider, TokenStore
 from .market import MarketDataClient
+from .stream import StreamClient
 from .trader import TraderClient
 
 
@@ -69,6 +70,7 @@ class SchwabClient:
 
         self._trader: TraderClient | None = None
         self._market: MarketDataClient | None = None
+        self._stream: StreamClient | None = None
 
     @property
     def auth(self) -> AuthProvider:
@@ -81,6 +83,17 @@ class SchwabClient:
         return self._trader
 
     @property
+    def stream(self) -> StreamClient:
+        """
+        The streaming client.
+
+        Only available after :meth:`start` has been called.
+        """
+        if self._stream is None:
+            raise RuntimeError("Stream client not available; call start() first")
+        return self._stream
+
+    @property
     def market(self) -> MarketDataClient:
         if self._market is None:
             self._market = MarketDataClient(self._auth)
@@ -90,14 +103,28 @@ class SchwabClient:
         """
         Start the client.
 
-        Starts the Authenticator and waits for authentication to
-        complete before returning.
+        Starts the Authenticator, waits for authentication, and
+        initializes the streaming client from user preferences.
         """
         await self._auth.start()
         await self._auth.wait()
 
+        prefs = await self.trader.get_user_preferences()
+        streamer = prefs["streamerInfo"][0]
+        self._stream = StreamClient(
+            self._auth,
+            url=streamer["streamerSocketUrl"],
+            customer_id=streamer["schwabClientCustomerId"],
+            correl_id=streamer["schwabClientCorrelId"],
+            channel=streamer["schwabClientChannel"],
+            function_id=streamer["schwabClientFunctionId"],
+        )
+
     async def stop(self) -> None:
         """Stop the client and release all resources."""
+        if self._stream is not None:
+            await self._stream.close()
+            self._stream = None
         if self._trader is not None:
             await self._trader.close()
             self._trader = None

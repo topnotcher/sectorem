@@ -18,6 +18,7 @@ from .errors import (
 )
 from .market import MarketDataClient
 from .rest import RestClient
+from .stream import StreamClient, Subscription
 from .trader import TraderClient
 
 __all__ = [
@@ -36,7 +37,9 @@ __all__ = [
     "SectoremError",
     "ServerError",
     "ServiceUnavailableError",
+    "StreamClient",
     "StreamError",
+    "Subscription",
     "Token",
     "TokenStore",
     "TraderClient",
