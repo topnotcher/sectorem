@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,6 +13,7 @@ import aiohttp
 
 from ..auth import AuthProvider
 from ..errors import StreamError
+from .fields import StreamField, StreamService
 
 log = logging.getLogger(__name__)
 
@@ -113,11 +114,11 @@ class StreamClient:
 
     async def subscribe(
         self,
-        service: str,
+        service: StreamService,
         callback: StreamCallback,
         *,
         keys: str | None = None,
-        fields: list[int],
+        fields: Sequence[StreamField],
         timeout: float = SUBSCRIBE_TIMEOUT,
     ) -> Subscription:
         """
@@ -129,11 +130,12 @@ class StreamClient:
         :param service: Schwab service name (e.g. ``ACCT_ACTIVITY``).
         :param callback: Called with each data message dict.
         :param keys: Comma-separated keys (e.g. symbols).
-        :param fields: Field numbers to subscribe to.
+        :param fields: Field names from the service's field enum (e.g. :class:`~.fields.EquityField`).
         :param timeout: Seconds to wait for the subscription to be confirmed.
         :raises asyncio.TimeoutError: If not confirmed in time.
         """
-        frozen_fields = tuple(fields)
+        field_type = service.field_type
+        frozen_fields = tuple(field_type(f).number for f in fields)
         handle = _Handle(
             service=service, keys=keys, fields=frozen_fields, callback=callback,
         )
@@ -449,6 +451,7 @@ class StreamClient:
                 self._on_notify(note)
         if "data" in message:
             for data in message["data"]:
+                print(data)
                 self._on_data(data)
 
     def _on_response(self, resp: dict[str, Any]) -> None:
@@ -464,18 +467,48 @@ class StreamClient:
             log.debug("Heartbeat: %s", note["heartbeat"])
 
     def _on_data(self, data: dict) -> None:
-        """Fan out a data message to all subscribers for the service."""
+        """Fan out data messages to all subscribers for the service, one event per content item."""
         service = data.get("service")
         if service is None:
             log.error("Received data message without service: %s", data)
             return
 
-        for handle in self._handles:
-            if handle.service == service:
+        try:
+            field_type = StreamService(service).field_type
+        except ValueError:
+            field_type = None
+
+        timestamp = data.get("timestamp")
+
+        for item in data.get("content", []):
+            event = self._transform_item(item, service, timestamp, field_type)
+
+            for handle in self._handles:
+                if handle.service == service:
+                    try:
+                        result = handle.callback(event)
+                    except Exception:
+                        log.exception("Error in stream callback for %s.", service)
+                    else:
+                        if asyncio.iscoroutine(result):
+                            asyncio.create_task(result)
+
+    @staticmethod
+    def _transform_item(item: dict, service: str, timestamp: int | None, field_type: type[StreamField] | None) -> dict:
+        """Transform a single content item into a flat event with named fields."""
+        event: dict[str, Any] = {"service": service, "timestamp": timestamp}
+        fields: dict[str, Any] = {}
+
+        for k, v in item.items():
+            if k.isdigit() and field_type is not None:
                 try:
-                    result = handle.callback(data)
-                except Exception:
-                    log.exception("Error in stream callback for %s.", service)
-                else:
-                    if asyncio.iscoroutine(result):
-                        asyncio.create_task(result)
+                    fields[field_type.from_number(int(k)).value] = v
+                except (KeyError, ValueError):
+                    fields[k] = v
+            elif k.isdigit():
+                fields[k] = v
+            else:
+                event[k] = v
+
+        event["fields"] = fields
+        return event

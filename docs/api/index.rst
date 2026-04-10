@@ -7,4 +7,5 @@ API Reference
    client
    trader
    market
+   stream
    errors
