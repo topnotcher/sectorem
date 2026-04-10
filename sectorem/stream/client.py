@@ -7,7 +7,9 @@ import json
 import logging
 from collections.abc import Callable, Coroutine, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -16,6 +18,7 @@ from ..errors import StreamError
 from .fields import StreamField, StreamService
 
 log = logging.getLogger(__name__)
+_EASTERN = ZoneInfo("America/New_York")
 
 #: Default timeout for subscribe operations.
 SUBSCRIBE_TIMEOUT = 60
@@ -451,7 +454,6 @@ class StreamClient:
                 self._on_notify(note)
         if "data" in message:
             for data in message["data"]:
-                print(data)
                 self._on_data(data)
 
     def _on_response(self, resp: dict[str, Any]) -> None:
@@ -496,7 +498,8 @@ class StreamClient:
     @staticmethod
     def _transform_item(item: dict, service: str, timestamp: int | None, field_type: type[StreamField] | None) -> dict:
         """Transform a single content item into a flat event with named fields."""
-        event: dict[str, Any] = {"service": service, "timestamp": timestamp}
+        ts = datetime.fromtimestamp(timestamp / 1000, tz=_EASTERN) if timestamp else None
+        event: dict[str, Any] = {"service": service, "timestamp": ts}
         fields: dict[str, Any] = {}
 
         for k, v in item.items():
@@ -509,6 +512,14 @@ class StreamClient:
                 fields[k] = v
             else:
                 event[k] = v
+
+        # Parse JSON-in-string for ACCT_ACTIVITY message_data.
+        msg_data = fields.get("message_data")
+        if isinstance(msg_data, str) and msg_data.startswith("{"):
+            try:
+                fields["message_data"] = json.loads(msg_data)
+            except (json.JSONDecodeError, ValueError):
+                pass
 
         event["fields"] = fields
         return event
