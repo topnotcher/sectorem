@@ -22,6 +22,16 @@ log = logging.getLogger(__name__)
 AUTH_URL = "https://api.schwabapi.com/v1/oauth/authorize"
 TOKEN_URL = "https://api.schwabapi.com/v1/oauth/token"
 
+#: Max interval between maintenance loop iterations. Short enough to
+#: recover promptly after system suspend/resume.
+_MAINTENANCE_POLL_INTERVAL = 10.0
+
+#: How long :meth:`Authenticator.get_access_token` waits for a fresh
+#: token. Must exceed :data:`_MAINTENANCE_POLL_INTERVAL` plus the
+#: refresh round-trip, so an expired-token caller doesn't give up
+#: before the loop has had a chance to refresh.
+_ACCESS_WAIT_TIMEOUT = _MAINTENANCE_POLL_INTERVAL + 5.0
+
 #: Receives the authorization URL; presents it to the user.
 LoginPrompt = Callable[[str], Coroutine[None, None, None]]
 
@@ -121,33 +131,59 @@ class Authenticator(AuthProvider):
         self._reauth_threshold = reauth_threshold
         self._access_refresh_buffer = access_refresh_buffer
 
-        self._state = AuthState.INACTIVE
         self._token: Token | None = None
         self._server: CallbackServer | None = None
         self._session: ClientSession | None = None
 
-        self._active_event = asyncio.Event()
+        self._token_cond = asyncio.Condition()
         self._maintenance_task: asyncio.Task | None = None
         self._reauth_prompted: bool = False
 
     @property
     def state(self) -> AuthState:
-        return self._state
+        if self._maintenance_task is None:
+            return AuthState.INACTIVE
+        if self._refresh_expired():
+            return AuthState.AUTHENTICATING
+        return AuthState.READY
 
     async def get_access_token(self) -> str:
         """
         Get the current access token.
 
+        If the access token has expired but the refresh token is still
+        valid, waits briefly for the maintenance loop to refresh it.
+        If the refresh token has expired, raises immediately since
+        recovery requires manual re-authorization.
+
         :raises NotAuthenticatedError: If no valid token is available.
         """
-        if self._token is None or self._token.access_expired:
+        if not self._access_expired():
+            return self._token.access_token
+
+        if self._refresh_expired():
             raise NotAuthenticatedError("Not authenticated")
 
-        return self._token.access_token
+        async with self._token_cond:
+            if self._access_expired() and not self._refresh_expired():
+                try:
+                    await asyncio.wait_for(
+                        self._token_cond.wait(),
+                        timeout=_ACCESS_WAIT_TIMEOUT,
+                    )
+                except TimeoutError:
+                    pass
+
+            if self._access_expired():
+                raise NotAuthenticatedError("Not authenticated")
+
+            return self._token.access_token
 
     async def wait(self) -> None:
         """Block until authentication is established."""
-        await self._active_event.wait()
+        async with self._token_cond:
+            while self._refresh_expired():
+                await self._token_cond.wait()
 
     async def start(self) -> None:
         """
@@ -164,10 +200,6 @@ class Authenticator(AuthProvider):
         self._server = await self._server_factory(self._on_callback)
         await self._server.start()
         self._token = await self._token_store.load()
-
-        if not self._access_expired():
-            self._state = AuthState.READY
-            self._active_event.set()
 
         self._maintenance_task = asyncio.create_task(self._maintenance_loop())
 
@@ -191,9 +223,6 @@ class Authenticator(AuthProvider):
             await self._session.close()
             self._session = None
 
-        self._state = AuthState.INACTIVE
-        self._active_event.clear()
-
     async def _on_callback(self, params: dict[str, str]) -> None:
         """Handle the OAuth redirect from Schwab."""
         self._reauth_prompted = False
@@ -209,10 +238,9 @@ class Authenticator(AuthProvider):
             "code": code,
             "redirect_uri": self._server.url,
         })
-        self._token = Token.from_response(data)
-        await self._token_store.save(self._token)
-        self._state = AuthState.READY
-        self._active_event.set()
+        token = Token.from_response(data)
+        await self._token_store.save(token)
+        await self._update_token(token)
 
     async def _maintenance_loop(self) -> None:
         """
@@ -231,9 +259,7 @@ class Authenticator(AuthProvider):
                     self._prompt_for_auth()
 
                 if self._refresh_expired():
-                    self._state = AuthState.AUTHENTICATING
-                    self._active_event.clear()
-                    await self._active_event.wait()
+                    await self.wait()
 
             if self._refresh_at() <= now:
                 await self._refresh_access_token()
@@ -242,7 +268,8 @@ class Authenticator(AuthProvider):
             if self._reauth_at() < next_wake and not self._reauth_prompted:
                 next_wake = self._reauth_at()
 
-            delay = max((next_wake - now).total_seconds(), 0)
+            # This polls rather than sleeping the full delay to handle things like system suspend/resume.
+            delay = min(_MAINTENANCE_POLL_INTERVAL, max((next_wake - now).total_seconds(), 0))
             log.debug("Maintenance: sleeping %.0fs.", delay)
             await asyncio.sleep(delay)
 
@@ -255,16 +282,17 @@ class Authenticator(AuthProvider):
             })
         except AuthenticationError:
             log.error("Token refresh failed; re-authorization required.")
-            self._token = None
-            self._active_event.clear()
+            await self._update_token(None)
         else:
-            self._token = Token.from_response(data, refresh_issued_at=self._token.refresh_issued_at)
+            token = Token.from_response(data, refresh_issued_at=self._token.refresh_issued_at)
+            await self._token_store.save(token)
+            await self._update_token(token)
 
-            if not self._active_event.is_set():
-                self._state = AuthState.READY
-                self._active_event.set()
-
-            await self._token_store.save(self._token)
+    async def _update_token(self, token: Token | None) -> None:
+        """Atomically update the current token and wake any waiters."""
+        async with self._token_cond:
+            self._token = token
+            self._token_cond.notify_all()
 
     def _refresh_expired(self) -> bool:
         return self._token is None or self._token.refresh_expired
