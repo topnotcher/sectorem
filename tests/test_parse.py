@@ -19,7 +19,6 @@ from sectorem.trader.types import (
     CashInitialBalance,
     CollectiveInvestmentPosition,
     EquityPosition,
-    Instrument,
     MarginBalance,
     MarginInitialBalance,
     OptionInstrument,
