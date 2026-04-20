@@ -22,27 +22,29 @@ class Instrument:
     """
     asset_type: AssetType
     symbol: str
-    description: str
-    cusip: str = ""
+    description: str = ""
+    cusip: str | None = None
     instrument_type: InstrumentType | None = None
 
 
 @dataclass(slots=True, frozen=True)
-class OptionInstrument(Instrument):
+class Option:
     """
     An option contract.
 
     ``symbol`` is the underlying ticker (e.g. ``"SMCI"``), not the
     OCC symbol. Use :meth:`occ_symbol` to get the OCC representation.
 
+    :param symbol: Underlying ticker symbol.
     :param strike: Strike price.
     :param right: Put or call.
     :param expiration: Expiration date.
     :param multiplier: Contract multiplier (typically 100).
     """
-    strike: float = 0.0
-    right: OptionRight = OptionRight.CALL
-    expiration: date = date.min
+    symbol: str
+    strike: float
+    right: OptionRight
+    expiration: date
     multiplier: int = 100
 
     @property
@@ -56,6 +58,38 @@ class OptionInstrument(Instrument):
         side = self.right.value[0]  # 'C' or 'P'
         strike_int = int(self.strike * 1000)
         return f"{self.symbol:<6s}{self.expiration.strftime('%y%m%d')}{side}{strike_int:08d}"
+
+
+@dataclass(slots=True, frozen=True)
+class OptionInstrument(Instrument):
+    """
+    An option instrument with full API metadata.
+
+    Wraps an :class:`Option` with the instrument metadata from a
+    Schwab API response. Use :attr:`option` to access the option
+    contract details directly.
+    """
+    option: Option = Option("", 0.0, OptionRight.CALL, date.min)
+
+    @property
+    def strike(self) -> float:
+        return self.option.strike
+
+    @property
+    def right(self) -> OptionRight:
+        return self.option.right
+
+    @property
+    def expiration(self) -> date:
+        return self.option.expiration
+
+    @property
+    def multiplier(self) -> int:
+        return self.option.multiplier
+
+    @property
+    def occ_symbol(self) -> str:
+        return self.option.occ_symbol
 
 
 @dataclass(slots=True, frozen=True)

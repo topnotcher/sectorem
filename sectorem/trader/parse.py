@@ -24,6 +24,7 @@ from .types import (
     MarginBalance,
     MarginInitialBalance,
     MutualFundPosition,
+    Option,
     OptionInstrument,
     OptionPosition,
     Position,
@@ -107,16 +108,21 @@ def _parse_option_instrument(raw: dict) -> OptionInstrument:
 
     instrument_type = _parse_nullable_enum(InstrumentType, raw.get("type"))
 
+    option = Option(
+        symbol=underlying,
+        strike=strike,
+        right=right,
+        expiration=expiration,
+        multiplier=multiplier,
+    )
+
     return OptionInstrument(
         asset_type=AssetType.OPTION,
         symbol=underlying,
         description=raw.get("description") or f'{underlying} {expiration} ${strike} {right.value}',
         cusip=raw.get("cusip", ""),
         instrument_type=instrument_type,
-        strike=strike,
-        right=right,
-        expiration=expiration,
-        multiplier=multiplier,
+        option=option,
     )
 
 
