@@ -89,6 +89,61 @@ class TestRequest:
         assert result == {}
 
 
+class TestFollowLocation:
+    @pytest.mark.asyncio
+    async def test_201_follows_absolute_location(self, mock_auth, aiohttp_server):
+        async def create_handler(request):
+            location = str(request.url.with_path("/v1/orders/123"))
+            return web.Response(status=201, headers={"Location": location})
+
+        async def get_handler(request):
+            return web.json_response({"orderId": 123, "status": "WORKING"})
+
+        app = web.Application()
+        app.router.add_post("/v1/orders", create_handler)
+        app.router.add_get("/v1/orders/123", get_handler)
+        server = await aiohttp_server(app)
+
+        client = RestClient(mock_auth, str(server.make_url("/v1")))
+        result = await client.post("orders", json={"symbol": "AAPL"})
+
+        assert result == {"orderId": 123, "status": "WORKING"}
+
+    @pytest.mark.asyncio
+    async def test_201_follows_root_relative_location(self, mock_auth, aiohttp_server):
+        """A root-relative Location is resolved against the request URL."""
+        async def create_handler(request):
+            return web.Response(status=201, headers={"Location": "/v1/orders/123"})
+
+        async def get_handler(request):
+            return web.json_response({"orderId": 123})
+
+        app = web.Application()
+        app.router.add_post("/v1/orders", create_handler)
+        app.router.add_get("/v1/orders/123", get_handler)
+        server = await aiohttp_server(app)
+
+        client = RestClient(mock_auth, str(server.make_url("/v1")))
+        result = await client.post("orders", json={"symbol": "AAPL"})
+
+        assert result == {"orderId": 123}
+
+    @pytest.mark.asyncio
+    async def test_201_without_location_falls_through(self, mock_auth, aiohttp_server):
+        """A 201 with no Location is treated as a normal body response."""
+        async def handler(request):
+            return web.json_response({"ok": True}, status=201)
+
+        app = web.Application()
+        app.router.add_post("/orders", handler)
+        server = await aiohttp_server(app)
+
+        client = RestClient(mock_auth, str(server.make_url("")))
+        result = await client.post("orders")
+
+        assert result == {"ok": True}
+
+
 class TestErrorMapping:
     @pytest.mark.asyncio
     async def test_429_raises_rate_limit_error(self, mock_auth, aiohttp_server):

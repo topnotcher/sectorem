@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..auth import AuthProvider
 from ..rest import RestClient
 from .constants import AccountType
-from .types import Balance, InitialBalance, Position
+from .order import OrderBuilder, OrderHandle, Side
+from .types import Balance, InitialBalance, Option, Position
 from .parse import parse_balance, parse_initial_balance, parse_position
 
 
@@ -111,6 +114,47 @@ class Account:
         if self._account_type is None:
             return None
         return self._account_type == AccountType.MARGIN
+
+    def order(
+        self, symbol: str | Option | None = None, side: Side | None = None, quantity: int | None = None,
+    ) -> OrderBuilder:
+        """
+        Create an :class:`~sectorem.trader.order.OrderBuilder` for this account.
+
+        For single-leg orders, pass ``symbol``, ``side``, and ``quantity``
+        to pre-populate the first leg::
+
+            await account.order("AAPL", Side.BUY, 100).limit(150.00).submit()
+
+        For multi-leg orders, call with no arguments and add legs::
+
+            await (account.order()
+                .leg(long_call, Side.BUY_TO_OPEN, 1)
+                .leg(short_call, Side.SELL_TO_OPEN, 1)
+                .net_debit(1.50)
+                .submit())
+        """
+        builder = OrderBuilder(self)
+        if symbol is not None and side is not None and quantity is not None:
+            builder.leg(symbol, side, quantity)
+        return builder
+
+    async def _submit_order(self, payload: dict[str, Any]) -> OrderHandle:
+        """Submit an order to the API and return a handle to track it."""
+        order = await self._client.post(f"accounts/{self._account_hash}/orders", json=payload)
+        return OrderHandle(self, order["orderId"])
+
+    async def _preview_order(self, payload: dict[str, Any]) -> dict:
+        """Preview an order without placing it."""
+        return await self._client.post(f"accounts/{self._account_hash}/previewOrder", json=payload)
+
+    async def _get_order(self, order_id: int) -> dict:
+        """Fetch a single order's status from the API."""
+        return await self._client.get(f"accounts/{self._account_hash}/orders/{order_id}")
+
+    async def _cancel_order(self, order_id: int) -> None:
+        """Cancel an order."""
+        await self._client.delete(f"accounts/{self._account_hash}/orders/{order_id}")
 
     async def get_positions(self) -> list[Position]:
         """Get the current positions in this account."""
