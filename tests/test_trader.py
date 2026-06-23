@@ -12,6 +12,7 @@ from aiohttp import web
 from sectorem.auth.manager import AuthProvider
 from sectorem.trader.client import TraderClient, Account
 from sectorem.trader.constants import AssetType, OptionRight
+from sectorem.trader.order import OrderHandle, Side
 from sectorem.trader.types import (
     CashBalance,
     CollectiveInvestmentPosition,
@@ -596,3 +597,81 @@ class TestAccount:
         assert isinstance(bal, CashBalance)
         assert bal.total_cash == 5000.0
         assert account.is_margin is False
+
+
+class TestAccountOrders:
+    @staticmethod
+    def _base_app():
+        async def numbers_handler(request):
+            return web.json_response([{"accountNumber": "123", "hashValue": "abc"}])
+
+        async def prefs_handler(request):
+            return web.json_response({"accounts": [{"accountNumber": "123", "primaryAccount": True, "nickName": "Test"}]})
+
+        app = web.Application()
+        app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
+        app.router.add_get("/trader/v1/userPreference", prefs_handler)
+        return app
+
+    @pytest.mark.asyncio
+    async def test_submit_returns_handle(self, mock_auth, aiohttp_server):
+        received = {}
+
+        async def create_handler(request):
+            received["body"] = await request.json()
+            location = str(request.url.with_path("/trader/v1/accounts/abc/orders/1003"))
+            return web.Response(status=201, headers={"Location": location})
+
+        async def order_handler(request):
+            return web.json_response({"orderId": 1003, "status": "WORKING"})
+
+        app = self._base_app()
+        app.router.add_post("/trader/v1/accounts/abc/orders", create_handler)
+        app.router.add_get("/trader/v1/accounts/abc/orders/1003", order_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        handle = await account.order("AAPL", Side.BUY, 100).limit(150.00).submit()
+
+        assert isinstance(handle, OrderHandle)
+        assert handle.order_id == 1003
+        assert received["body"]["orderType"] == "LIMIT"
+        assert received["body"]["price"] == "150.00"
+
+    @pytest.mark.asyncio
+    async def test_handle_status(self, mock_auth, aiohttp_server):
+        async def order_handler(request):
+            return web.json_response({"orderId": 1003, "status": "FILLED"})
+
+        app = self._base_app()
+        app.router.add_get("/trader/v1/accounts/abc/orders/1003", order_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        status = await OrderHandle(account, 1003).status()
+
+        assert status["status"] == "FILLED"
+
+    @pytest.mark.asyncio
+    async def test_handle_cancel(self, mock_auth, aiohttp_server):
+        received_method = None
+
+        async def cancel_handler(request):
+            nonlocal received_method
+            received_method = request.method
+            return web.Response(status=200)
+
+        app = self._base_app()
+        app.router.add_delete("/trader/v1/accounts/abc/orders/1003", cancel_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        await OrderHandle(account, 1003).cancel()
+
+        assert received_method == "DELETE"

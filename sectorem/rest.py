@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import json
 import logging
+from contextlib import asynccontextmanager
+from urllib.parse import urljoin
 
 import aiohttp
 from aiohttp import ClientRequest, ClientResponse, ClientHandlerType, ClientSession
-from typing import Any
+from typing import Any, AsyncGenerator
 
 from .auth import AuthProvider
 from .errors import ApiError
@@ -60,32 +62,45 @@ class RestClient:
             await self._session.close()
             self._session = None
 
-    async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
+    @asynccontextmanager
+    async def _send(self, method: str, url: str, **kwargs: Any) -> AsyncGenerator[ClientResponse]:
         """
-        Make an authenticated request to the Schwab API.
+        Send an authenticated request to a fully-qualified *url* and yield the response.
 
-        Builds the full URL from *base_url* and *path* and maps
-        HTTP errors to exception types.
+        Maps HTTP errors to exception types. The response is yielded inside
+        its context, so headers and body must be read before the block exits.
 
-        :param method: HTTP method.
-        :param path: URL path relative to the base URL.
-        :param kwargs: Passed through to :meth:`aiohttp.ClientSession.request`.
-        :returns: Parsed JSON response.
         :raises ApiError: On non-2xx responses.
         :raises RateLimitError: On HTTP 429.
         """
-        url = f"{self._base_url}/{path.lstrip('/')}"
         session = await self._get_session()
 
         async with session.request(method, url, **kwargs) as resp:
             if resp.status >= 400:
                 await self._api_error_from_resp(resp)
+            yield resp
 
+    async def _request(self, method: str, path: str, **kwargs: Any) -> dict:
+        """
+        Make a request to a *path* relative to the API base URL and return the JSON body.
+        """
+        return await self._request_url(method, f"{self._base_url}/{path.lstrip('/')}", **kwargs)
+
+    async def _request_url(self, method: str, url: str, **kwargs: Any) -> dict:
+        """
+        Make a request to a fully-qualified *url* and return the parsed JSON body.
+
+        A ``201 Created`` carries no body, only a ``Location`` header pointing
+        at the new resource; that location is resolved against the request URL
+        and followed with a GET, returning the created resource. Other
+        responses without a JSON body yield an empty dict.
+        """
+        async with self._send(method, url, **kwargs) as resp:
+            if resp.status == 201 and (location := resp.headers.get("Location")):
+                return await self._request_url("GET", urljoin(url, location))
             if resp.content_type == "application/json":
-                text = await resp.text()
-                return json.loads(text, parse_float=PrettyFloat)
-            else:
-                return {}
+                return json.loads(await resp.text(), parse_float=PrettyFloat)
+            return {}
 
     @staticmethod
     async def _api_error_from_resp(resp: aiohttp.ClientResponse) -> None:
