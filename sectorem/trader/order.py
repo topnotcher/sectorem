@@ -2,14 +2,30 @@
 
 from __future__ import annotations
 
+import asyncio
 import enum
+import logging
 from typing import TYPE_CHECKING, Any
 
-from .constants import AssetType
+from ..errors import OrderNotFilledError, StreamError
+from ..stream.fields import AccountActivityField, StreamService
+from .constants import AssetType, OrderStatus
 from .types import Option
 
 if TYPE_CHECKING:
+    from ..stream import Subscription
     from .client import Account
+
+log = logging.getLogger(__name__)
+
+#: Default polling interval for :meth:`OrderHandle.wait` when no stream is available.
+POLL_INTERVAL = 2.0
+
+#: Fallback polling interval when ``ACCT_ACTIVITY`` events provide the primary wake-up.
+STREAM_POLL_INTERVAL = 30.0
+
+# Schwab requires a key for ACCT_ACTIVITY but ignores its value.
+_ACCT_ACTIVITY_KEY = "Account Activity"
 
 
 class OrderType(enum.Enum):
@@ -188,13 +204,104 @@ class OrderHandle:
     def __repr__(self) -> str:
         return f"OrderHandle(order_id={self.order_id!r})"
 
-    async def status(self) -> dict:
-        """Fetch the current order status from the API."""
+    async def fetch(self) -> dict:
+        """Fetch the full order record from the API."""
         return await self._account._get_order(self.order_id)
+
+    async def status(self) -> OrderStatus:
+        """Fetch the current order status from the API."""
+        return _parse_status(await self.fetch())
 
     async def cancel(self) -> None:
         """Cancel the order."""
         await self._account._cancel_order(self.order_id)
+
+    async def wait(self, *, timeout: float | None = None, poll_interval: float | None = None) -> dict:
+        """
+        Wait for the order to fill.
+
+        The order status is polled until it reaches a terminal state. When the
+        trader client has a streaming client attached, ``ACCT_ACTIVITY`` events
+        for this order trigger an immediate status check and polling drops to a
+        slow fallback (:data:`STREAM_POLL_INTERVAL`); without one, the order is
+        polled every :data:`POLL_INTERVAL` seconds. The REST status is always
+        the source of truth — stream events only accelerate the next check, so
+        orders that don't stream (e.g. EXTO) still resolve via polling.
+
+        :param timeout: Maximum seconds to wait, or ``None`` to wait indefinitely.
+        :param poll_interval: Seconds between status polls. Defaults as described above.
+        :return: The final order dict, with status ``FILLED``.
+        :raises OrderNotFilledError: If the order reaches a terminal state other
+            than filled (canceled, rejected, expired, replaced, or unknown).
+        :raises TimeoutError: If *timeout* elapses first. The order is left open.
+        """
+        nudge = asyncio.Event()
+        subscription = await self._subscribe_activity(nudge)
+
+        if poll_interval is None:
+            poll_interval = POLL_INTERVAL if subscription is None else STREAM_POLL_INTERVAL
+
+        try:
+            async with asyncio.timeout(timeout):
+                while True:
+                    # Clear before polling so events that race the poll are retained.
+                    nudge.clear()
+                    order = await self.fetch()
+                    status = _parse_status(order)
+
+                    if status is OrderStatus.FILLED:
+                        return order
+                    if status.is_terminal:
+                        raise OrderNotFilledError(self.order_id, status, order)
+
+                    try:
+                        await asyncio.wait_for(nudge.wait(), timeout=poll_interval)
+                    except TimeoutError:
+                        pass
+        finally:
+            if subscription is not None:
+                await subscription.cancel()
+
+    async def _subscribe_activity(self, nudge: asyncio.Event) -> Subscription | None:
+        """
+        Subscribe to ``ACCT_ACTIVITY`` events for this order, setting *nudge*
+        on each one. Returns ``None`` (leaving :meth:`wait` on pure polling)
+        when no stream is available or the subscription fails.
+        """
+        stream = self._account._stream
+        if stream is None:
+            return None
+
+        def callback(event: dict) -> None:
+            data = event.get("fields", {}).get("message_data")
+            if isinstance(data, dict):
+                order_id = data.get("SchwabOrderID")
+                # Only ignore events positively identified as another order's;
+                # anything unrecognizable just costs an extra poll.
+                if order_id is not None and str(order_id) != str(self.order_id):
+                    return
+            nudge.set()
+
+        try:
+            return await stream.subscribe(
+                StreamService.ACCT_ACTIVITY,
+                callback,
+                keys=_ACCT_ACTIVITY_KEY,
+                fields=(AccountActivityField.MESSAGE_TYPE, AccountActivityField.MESSAGE_DATA),
+            )
+        except (StreamError, TimeoutError):
+            log.warning("ACCT_ACTIVITY subscription failed; falling back to polling.", exc_info=True)
+            return None
+
+
+def _parse_status(order: dict) -> OrderStatus:
+    """Extract the order status, mapping missing or unrecognized values to ``UNKNOWN``."""
+    raw = order.get("status")
+    try:
+        return OrderStatus(raw)
+    except ValueError:
+        log.warning("Unrecognized order status %r; treating as UNKNOWN.", raw)
+        return OrderStatus.UNKNOWN
 
 
 def _format_price(price: float) -> str:

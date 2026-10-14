@@ -11,7 +11,7 @@ from aiohttp import web
 
 from sectorem.auth.manager import AuthProvider
 from sectorem.trader.client import TraderClient, Account
-from sectorem.trader.constants import AssetType, OptionRight
+from sectorem.trader.constants import AssetType, OptionRight, OrderStatus
 from sectorem.trader.order import OrderHandle, Side
 from sectorem.trader.types import (
     CashBalance,
@@ -654,7 +654,7 @@ class TestAccountOrders:
         account = await client.get_account("123")
         status = await OrderHandle(account, 1003).status()
 
-        assert status["status"] == "FILLED"
+        assert status is OrderStatus.FILLED
 
     @pytest.mark.asyncio
     async def test_handle_cancel(self, mock_auth, aiohttp_server):
@@ -675,3 +675,25 @@ class TestAccountOrders:
         await OrderHandle(account, 1003).cancel()
 
         assert received_method == "DELETE"
+
+    @pytest.mark.asyncio
+    async def test_handle_wait_polls_to_fill(self, mock_auth, aiohttp_server):
+        calls = 0
+
+        async def order_handler(request):
+            nonlocal calls
+            calls += 1
+            status = "FILLED" if calls >= 2 else "WORKING"
+            return web.json_response({"orderId": 1003, "status": status})
+
+        app = self._base_app()
+        app.router.add_get("/trader/v1/accounts/abc/orders/1003", order_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        order = await OrderHandle(account, 1003).wait(poll_interval=0.001)
+
+        assert order["status"] == "FILLED"
+        assert calls == 2

@@ -119,6 +119,7 @@ class SchwabClient:
             channel=streamer["schwabClientChannel"],
             function_id=streamer["schwabClientFunctionId"],
         )
+        self.trader.stream = self._stream
 
     async def stop(self) -> None:
         """Stop the client and release all resources."""

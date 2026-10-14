@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import date
 from unittest.mock import AsyncMock
 
 import pytest
 
-from sectorem.trader.constants import OptionRight
+from sectorem.errors import OrderNotFilledError, StreamError
+from sectorem.trader.constants import OptionRight, OrderStatus
 from sectorem.trader.order import Duration, OrderBuilder, OrderHandle, Session, Side
 from sectorem.trader.types import Option
 
@@ -173,3 +175,185 @@ class TestSubmitAndPreview:
 
         assert result == {"price": "150.00"}
         account._preview_order.assert_awaited_once_with(builder.build())
+
+
+class FakeSubscription:
+    def __init__(self, stream: FakeStream) -> None:
+        self._stream = stream
+
+    async def cancel(self) -> None:
+        self._stream.cancelled = True
+
+
+class FakeStream:
+    """Stand-in for StreamClient that captures the ACCT_ACTIVITY callback."""
+
+    def __init__(self, fail: bool = False) -> None:
+        self.fail = fail
+        self.callback = None
+        self.cancelled = False
+        self.subscribe_args: tuple | None = None
+
+    async def subscribe(self, service, callback, *, keys=None, fields=(), timeout=60):
+        if self.fail:
+            raise StreamError("subscription failed")
+        self.callback = callback
+        self.subscribe_args = (service, keys, tuple(fields))
+        return FakeSubscription(self)
+
+
+def make_wait_handle(statuses: list[str], stream: FakeStream | None = None) -> tuple[OrderHandle, AsyncMock]:
+    """An OrderHandle whose account returns the given order statuses in sequence."""
+    account = AsyncMock()
+    account._stream = stream
+    account._get_order.side_effect = [{"orderId": 42, "status": s} for s in statuses]
+    return OrderHandle(account, 42), account
+
+
+def activity_event(order_id: int | str) -> dict:
+    return {
+        "service": "ACCT_ACTIVITY",
+        "fields": {
+            "message_type": "OrderFillCompleted",
+            "message_data": {"SchwabOrderID": str(order_id)},
+        },
+    }
+
+
+async def wait_until(predicate, timeout: float = 1.0) -> None:
+    async with asyncio.timeout(timeout):
+        while not predicate():
+            await asyncio.sleep(0.001)
+
+
+class TestWaitPolling:
+    @pytest.mark.asyncio
+    async def test_returns_final_order_on_fill(self):
+        handle, account = make_wait_handle(["WORKING", "FILLED"])
+
+        order = await handle.wait(poll_interval=0.001)
+
+        assert order["status"] == "FILLED"
+        assert account._get_order.await_count == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["CANCELED", "REJECTED", "EXPIRED", "REPLACED"])
+    async def test_raises_on_terminal_non_fill(self, status):
+        handle, _ = make_wait_handle([status])
+
+        with pytest.raises(OrderNotFilledError) as exc_info:
+            await handle.wait(poll_interval=0.001)
+
+        assert exc_info.value.order_id == 42
+        assert exc_info.value.status is OrderStatus(status)
+        assert exc_info.value.order["status"] == status
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self):
+        account = AsyncMock()
+        account._stream = None
+        account._get_order.side_effect = None
+        account._get_order.return_value = {"orderId": 42, "status": "WORKING"}
+        handle = OrderHandle(account, 42)
+
+        with pytest.raises(TimeoutError):
+            await handle.wait(timeout=0.05, poll_interval=0.01)
+
+    @pytest.mark.asyncio
+    async def test_unknown_status_raises(self):
+        handle, _ = make_wait_handle(["SOME_FUTURE_STATUS"])
+
+        with pytest.raises(OrderNotFilledError) as exc_info:
+            await handle.wait(poll_interval=0.001)
+
+        assert exc_info.value.status is OrderStatus.UNKNOWN
+
+
+class TestStatus:
+    @pytest.mark.asyncio
+    async def test_status_returns_enum(self):
+        handle, _ = make_wait_handle(["WORKING"])
+        assert await handle.status() is OrderStatus.WORKING
+
+    @pytest.mark.asyncio
+    async def test_unrecognized_status_is_unknown(self):
+        handle, _ = make_wait_handle(["SOME_FUTURE_STATUS"])
+        assert await handle.status() is OrderStatus.UNKNOWN
+
+    @pytest.mark.asyncio
+    async def test_fetch_returns_raw_order(self):
+        handle, _ = make_wait_handle(["WORKING"])
+        assert await handle.fetch() == {"orderId": 42, "status": "WORKING"}
+
+
+class TestWaitStream:
+    @pytest.mark.asyncio
+    async def test_event_triggers_immediate_poll(self):
+        stream = FakeStream()
+        # Default stream poll interval is 30s, so completion requires the nudge.
+        handle, account = make_wait_handle(["WORKING", "FILLED"], stream=stream)
+
+        task = asyncio.create_task(handle.wait())
+        await wait_until(lambda: account._get_order.await_count == 1)
+        stream.callback(activity_event(42))
+
+        order = await asyncio.wait_for(task, timeout=1)
+        assert order["status"] == "FILLED"
+        assert stream.cancelled
+
+    @pytest.mark.asyncio
+    async def test_event_for_other_order_is_ignored(self):
+        stream = FakeStream()
+        handle, account = make_wait_handle(["WORKING", "FILLED"], stream=stream)
+
+        task = asyncio.create_task(handle.wait())
+        await wait_until(lambda: account._get_order.await_count == 1)
+        stream.callback(activity_event(999))
+        await asyncio.sleep(0.05)
+        assert account._get_order.await_count == 1
+
+        stream.callback(activity_event(42))
+        order = await asyncio.wait_for(task, timeout=1)
+        assert order["status"] == "FILLED"
+
+    @pytest.mark.asyncio
+    async def test_unparseable_event_still_wakes(self):
+        stream = FakeStream()
+        handle, account = make_wait_handle(["WORKING", "FILLED"], stream=stream)
+
+        task = asyncio.create_task(handle.wait())
+        await wait_until(lambda: account._get_order.await_count == 1)
+        stream.callback({"service": "ACCT_ACTIVITY", "fields": {"message_data": "unparsed"}})
+
+        order = await asyncio.wait_for(task, timeout=1)
+        assert order["status"] == "FILLED"
+
+    @pytest.mark.asyncio
+    async def test_subscribes_to_acct_activity(self):
+        stream = FakeStream()
+        handle, _ = make_wait_handle(["FILLED"], stream=stream)
+
+        await handle.wait()
+
+        assert stream.subscribe_args is not None
+        assert stream.subscribe_args[0] == "ACCT_ACTIVITY"
+
+    @pytest.mark.asyncio
+    async def test_subscription_cancelled_on_error(self):
+        stream = FakeStream()
+        handle, _ = make_wait_handle(["REJECTED"], stream=stream)
+
+        with pytest.raises(OrderNotFilledError):
+            await handle.wait()
+
+        assert stream.cancelled
+
+    @pytest.mark.asyncio
+    async def test_subscribe_failure_falls_back_to_polling(self):
+        stream = FakeStream(fail=True)
+        handle, account = make_wait_handle(["WORKING", "FILLED"], stream=stream)
+
+        order = await handle.wait(poll_interval=0.001)
+
+        assert order["status"] == "FILLED"
+        assert account._get_order.await_count == 2

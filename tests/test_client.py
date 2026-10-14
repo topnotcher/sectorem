@@ -89,6 +89,7 @@ class TestLifecycle:
         mock_auth.start.assert_awaited_once()
         mock_auth.wait.assert_awaited_once()
         assert client._stream is not None
+        assert client.trader.stream is client._stream
 
     @pytest.mark.asyncio
     async def test_stop_cleans_up(self, mock_auth):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..auth import AuthProvider
 from ..rest import RestClient
@@ -10,6 +10,9 @@ from .constants import AccountType
 from .order import OrderBuilder, OrderHandle, Side
 from .types import Balance, InitialBalance, Option, Position
 from .parse import parse_balance, parse_initial_balance, parse_position
+
+if TYPE_CHECKING:
+    from ..stream import StreamClient
 
 
 TRADER_BASE_URL = "https://api.schwabapi.com/trader/v1"
@@ -26,6 +29,10 @@ class TraderClient(RestClient):
 
     def __init__(self, auth: AuthProvider) -> None:
         super().__init__(auth, TRADER_BASE_URL)
+        #: Optional streaming client. When set, order waits use ``ACCT_ACTIVITY``
+        #: events to react promptly instead of relying on polling alone.
+        #: :meth:`~sectorem.client.SchwabClient.start` sets this automatically.
+        self.stream: StreamClient | None = None
         self._accounts: dict[str, str] = {}
         self._preferences: dict | None = None
 
@@ -107,6 +114,11 @@ class Account:
         self._account_hash: str = account_hash
         self._client: TraderClient = client
         self._account_type: AccountType | None = None
+
+    @property
+    def _stream(self) -> StreamClient | None:
+        """The streaming client, if one has been wired up."""
+        return self._client.stream
 
     @property
     def is_margin(self) -> bool | None:

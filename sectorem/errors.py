@@ -1,6 +1,11 @@
 """Sectorem exception hierarchy."""
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .trader.constants import OrderStatus
+
 
 class SectoremError(Exception):
     """Base exception for all sectorem errors."""
@@ -111,3 +116,23 @@ class InvalidApiResponseError(SectoremError):
 
 class StreamError(SectoremError):
     """Raised when the streaming connection encounters an error."""
+
+
+class OrderNotFilledError(SectoremError):
+    """
+    Raised when an awaited order reaches a terminal state other than filled.
+
+    :param order_id: The Schwab order ID.
+    :param status: The terminal status the order reached.
+    :param order: The final order dict from the API.
+    """
+
+    def __init__(self, order_id: int, status: OrderStatus, order: dict) -> None:
+        #: The Schwab order ID.
+        self.order_id = order_id
+        #: The terminal status the order reached.
+        self.status = status
+        #: The final order dict from the API.
+        self.order = order
+
+        super().__init__(f"Order {order_id} is {status.value}; it will not fill")

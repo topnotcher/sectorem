@@ -50,3 +50,48 @@ class OptionRight(enum.Enum):
     """Option right."""
     PUT = "PUT"
     CALL = "CALL"
+
+
+class OrderStatus(enum.Enum):
+    """Schwab order status."""
+    AWAITING_PARENT_ORDER = "AWAITING_PARENT_ORDER"
+    AWAITING_CONDITION = "AWAITING_CONDITION"
+    AWAITING_STOP_CONDITION = "AWAITING_STOP_CONDITION"
+    AWAITING_MANUAL_REVIEW = "AWAITING_MANUAL_REVIEW"
+    ACCEPTED = "ACCEPTED"
+    AWAITING_UR_OUT = "AWAITING_UR_OUT"
+    PENDING_ACTIVATION = "PENDING_ACTIVATION"
+    QUEUED = "QUEUED"
+    WORKING = "WORKING"
+    REJECTED = "REJECTED"
+    PENDING_CANCEL = "PENDING_CANCEL"
+    CANCELED = "CANCELED"
+    PENDING_REPLACE = "PENDING_REPLACE"
+    REPLACED = "REPLACED"
+    FILLED = "FILLED"
+    EXPIRED = "EXPIRED"
+    NEW = "NEW"
+    AWAITING_RELEASE_TIME = "AWAITING_RELEASE_TIME"
+    PENDING_ACKNOWLEDGEMENT = "PENDING_ACKNOWLEDGEMENT"
+    PENDING_RECALL = "PENDING_RECALL"
+    UNKNOWN = "UNKNOWN"
+
+    @property
+    def is_terminal(self) -> bool:
+        """
+        Whether the order can no longer fill from this status.
+
+        ``UNKNOWN`` counts as terminal: it is also what unrecognized API
+        values map to, and waiting on a status we can't interpret is unsafe.
+        """
+        return self in _TERMINAL_ORDER_STATUSES
+
+
+_TERMINAL_ORDER_STATUSES = frozenset({
+    OrderStatus.FILLED,
+    OrderStatus.CANCELED,
+    OrderStatus.REJECTED,
+    OrderStatus.EXPIRED,
+    OrderStatus.REPLACED,
+    OrderStatus.UNKNOWN,
+})
