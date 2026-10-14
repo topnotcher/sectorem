@@ -15,4 +15,5 @@ raw JSON.
    quickstart
    design
    auth
+   schwab-notes
    api/index
