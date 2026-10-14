@@ -71,17 +71,22 @@ class OrderBuilder:
     """
     Builder for Schwab order requests.
 
-    Created via :meth:`~sectorem.trader.client.Account.order`. Use the
-    chaining methods to configure the order, then call :meth:`submit`
-    to place it or :meth:`preview` to dry-run it.
+    Created via :meth:`~sectorem.trader.client.Account.order` or
+    :meth:`OrderHandle.replace`. Use the chaining methods to configure the
+    order, then call :meth:`submit` to place it or :meth:`preview` to dry-run it.
 
     Example::
 
         await account.order("AAPL", Side.BUY, 100).limit(150.00).submit()
+
+    :param account: The account to submit to.
+    :param replaces: Order ID this order replaces, if any. When set,
+        :meth:`submit` replaces that order instead of placing a new one.
     """
 
-    def __init__(self, account: Account) -> None:
+    def __init__(self, account: Account, replaces: int | None = None) -> None:
         self._account = account
+        self._replaces = replaces
         self._order_type: OrderType | None = None
         self._session: Session = Session.NORMAL
         self._duration: Duration = Duration.DAY
@@ -178,9 +183,16 @@ class OrderBuilder:
         return payload
 
     async def submit(self) -> OrderHandle:
-        """Build and submit the order, returning a handle to track it."""
+        """
+        Build and submit the order, returning a handle to track it.
+
+        For a replacement order, the handle is for the new order; the
+        replaced order's handle will report status ``REPLACED``.
+        """
         payload = self.build()
-        return await self._account._submit_order(payload)
+        if self._replaces is None:
+            return await self._account._submit_order(payload)
+        return await self._account._replace_order(self._replaces, payload)
 
     async def preview(self) -> dict:
         """Build and preview the order without placing it."""
@@ -215,6 +227,20 @@ class OrderHandle:
     async def cancel(self) -> None:
         """Cancel the order."""
         await self._account._cancel_order(self.order_id)
+
+    def replace(
+        self, symbol: str | Option | None = None, side: Side | None = None, quantity: int | None = None,
+    ) -> OrderBuilder:
+        """
+        Create an :class:`OrderBuilder` that replaces this order.
+
+        Schwab replaces by cancelling this order and creating a new one,
+        so the full order must be specified again. Arguments mirror
+        :meth:`~sectorem.trader.client.Account.order`::
+
+            new_handle = await handle.replace("AAPL", Side.BUY, 100).limit(151.00).submit()
+        """
+        return self._account._order_builder(symbol, side, quantity, replaces=self.order_id)
 
     async def wait(self, *, timeout: float | None = None, poll_interval: float | None = None) -> dict:
         """

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -175,6 +175,34 @@ class TestSubmitAndPreview:
 
         assert result == {"price": "150.00"}
         account._preview_order.assert_awaited_once_with(builder.build())
+
+    @pytest.mark.asyncio
+    async def test_submit_with_replaces_calls_replace(self):
+        account = AsyncMock()
+        new_handle = OrderHandle(account, 43)
+        account._replace_order.return_value = new_handle
+
+        builder = OrderBuilder(account, replaces=42).leg("AAPL", Side.BUY, 100).limit(151.00)
+        result = await builder.submit()
+
+        assert result is new_handle
+        account._replace_order.assert_awaited_once_with(42, builder.build())
+        account._submit_order.assert_not_awaited()
+
+
+class TestReplace:
+    def test_replace_builder_is_bound_to_order(self):
+        account = AsyncMock()
+        account._order_builder = Mock(
+            side_effect=lambda symbol, side, quantity, *, replaces: (
+                OrderBuilder(account, replaces=replaces).leg(symbol, side, quantity)
+            ),
+        )
+
+        builder = OrderHandle(account, 42).replace("AAPL", Side.BUY, 100)
+
+        assert builder._replaces == 42
+        assert builder.limit(151.00).build()["orderLegCollection"][0]["instrument"]["symbol"] == "AAPL"
 
 
 class FakeSubscription:

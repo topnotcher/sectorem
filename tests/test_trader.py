@@ -677,6 +677,34 @@ class TestAccountOrders:
         assert received_method == "DELETE"
 
     @pytest.mark.asyncio
+    async def test_handle_replace_returns_new_handle(self, mock_auth, aiohttp_server):
+        received = {}
+
+        async def replace_handler(request):
+            received["method"] = request.method
+            received["body"] = await request.json()
+            location = str(request.url.with_path("/trader/v1/accounts/abc/orders/1004"))
+            return web.Response(status=201, headers={"Location": location})
+
+        async def new_order_handler(request):
+            return web.json_response({"orderId": 1004, "status": "WORKING"})
+
+        app = self._base_app()
+        app.router.add_put("/trader/v1/accounts/abc/orders/1003", replace_handler)
+        app.router.add_get("/trader/v1/accounts/abc/orders/1004", new_order_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        old = OrderHandle(account, 1003)
+        new = await old.replace("AAPL", Side.BUY, 100).limit(151.00).submit()
+
+        assert new.order_id == 1004
+        assert received["method"] == "PUT"
+        assert received["body"]["price"] == "151.00"
+
+    @pytest.mark.asyncio
     async def test_handle_wait_polls_to_fill(self, mock_auth, aiohttp_server):
         calls = 0
 

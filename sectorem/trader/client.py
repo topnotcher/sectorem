@@ -146,7 +146,13 @@ class Account:
                 .net_debit(1.50)
                 .submit())
         """
-        builder = OrderBuilder(self)
+        return self._order_builder(symbol, side, quantity)
+
+    def _order_builder(
+        self, symbol: str | Option | None, side: Side | None, quantity: int | None, *, replaces: int | None = None,
+    ) -> OrderBuilder:
+        """Create a builder, pre-populating the first leg when fully specified."""
+        builder = OrderBuilder(self, replaces=replaces)
         if symbol is not None and side is not None and quantity is not None:
             builder.leg(symbol, side, quantity)
         return builder
@@ -154,6 +160,11 @@ class Account:
     async def _submit_order(self, payload: dict[str, Any]) -> OrderHandle:
         """Submit an order to the API and return a handle to track it."""
         order = await self._client.post(f"accounts/{self._account_hash}/orders", json=payload)
+        return OrderHandle(self, order["orderId"])
+
+    async def _replace_order(self, order_id: int, payload: dict[str, Any]) -> OrderHandle:
+        """Replace an order and return a handle to the new order."""
+        order = await self._client.put(f"accounts/{self._account_hash}/orders/{order_id}", json=payload)
         return OrderHandle(self, order["orderId"])
 
     async def _preview_order(self, payload: dict[str, Any]) -> dict:
