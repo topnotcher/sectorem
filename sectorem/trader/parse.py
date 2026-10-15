@@ -352,11 +352,7 @@ def _parse_validation_messages(raw: dict) -> tuple[ValidationMessage, ...]:
     messages = []
     for level in OrderValidationLevel:
         for detail in raw.get(level.value) or []:
-            messages.append(ValidationMessage(
-                level=level,
-                message=detail.get("activityMessage") or detail.get("message") or "",
-                rule=detail.get("validationRuleName"),
-            ))
+            messages.append(ValidationMessage(level=level, message=detail.get("activityMessage", "")))
     return tuple(messages)
 
 

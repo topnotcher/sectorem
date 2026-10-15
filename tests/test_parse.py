@@ -466,10 +466,15 @@ class TestParseOrderPreview:
         raw = {
             **PREVIEW_RAW,
             "orderStrategy": {**PREVIEW_RAW["orderStrategy"], "status": "REJECTED"},
+            # Taken from a live rejected preview (2026-10-14).
             "orderValidationResult": {
-                "rejects": [{"validationRuleName": "BP_CHECK", "activityMessage": "Insufficient buying power"}],
-                "warns": [{"message": "Order is far from market"}],
-                "alerts": [],
+                "rejects": [
+                    {"activityMessage": "You do not have enough available cash/buying power for this order.",
+                     "originalSeverity": "REJECT"},
+                    {"activityMessage": "This order is over the maximum share amount allowed.",
+                     "originalSeverity": "REJECT"},
+                ],
+                "warns": [{"activityMessage": "Order is far from market", "originalSeverity": "WARN"}],
             },
         }
 
@@ -477,7 +482,8 @@ class TestParseOrderPreview:
 
         assert preview.status is OrderStatus.REJECTED
         assert preview.messages == (
-            ValidationMessage(OrderValidationLevel.REJECT, "Insufficient buying power", "BP_CHECK"),
+            ValidationMessage(OrderValidationLevel.REJECT, "You do not have enough available cash/buying power for this order."),
+            ValidationMessage(OrderValidationLevel.REJECT, "This order is over the maximum share amount allowed."),
             ValidationMessage(OrderValidationLevel.WARN, "Order is far from market"),
         )
 

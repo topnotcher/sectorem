@@ -308,11 +308,9 @@ class ValidationMessage:
 
     :param level: Severity of the message.
     :param message: Human-readable text.
-    :param rule: Name of the validation rule that produced it, if given.
     """
     level: OrderValidationLevel
     message: str
-    rule: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -320,9 +318,9 @@ class OrderPreview:
     """
     Result of previewing an order without placing it.
 
-    From the ``previewOrder`` response. Balance and commission fields are
-    verified against live data; ``messages`` is based on the OpenAPI spec —
-    an accepted preview returns an empty ``orderValidationResult``.
+    From the ``previewOrder`` response. An accepted preview has an empty
+    ``orderValidationResult``; a rejected one carries one or more messages
+    (e.g. "You do not have enough available cash/buying power for this order.").
 
     :param status: Validation verdict (``ACCEPTED`` when the order would be placed).
     :param order_value: Notional value of the order.
