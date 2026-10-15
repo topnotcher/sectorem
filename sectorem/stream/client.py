@@ -53,6 +53,15 @@ class _WireState:
     fields: set[int]
 
 
+def _log_background_result(fut: asyncio.Future[dict]) -> None:
+    """Consume the result of a fire-and-forget command, logging failures."""
+    if fut.cancelled():
+        return
+    exc = fut.exception()
+    if exc is not None:
+        log.debug("Background command failed: %s", exc)
+
+
 class Subscription:
     """
     Handle for a streaming subscription.
@@ -241,7 +250,7 @@ class StreamClient:
         if not any(h.service == service for h in self._handles):
             log.debug("No remaining handles for %s. Sending UNSUBS.", service)
             # No handles left for this service.
-            self._enqueue_command(service, "UNSUBS")
+            self._enqueue_background(service, "UNSUBS")
             del self._wire[service]
             return
 
@@ -249,7 +258,7 @@ class StreamClient:
         removed_keys = state.keys - desired_keys
         if removed_keys:
             log.debug("Existing subscription for %s. Removing keys %s.", service, removed_keys)
-            self._enqueue_command(
+            self._enqueue_background(
                 service, "UNSUBS", {"keys": ",".join(removed_keys)},
             )
             state.keys -= removed_keys
@@ -387,6 +396,17 @@ class StreamClient:
         cmd = self._make_command(service, command, parameters)
         self._tx_queue.put_nowait(cmd)
         return cmd.future
+
+    def _enqueue_background(
+        self, service: str, command: str, parameters: dict[str, str] | None = None,
+    ) -> None:
+        """
+        Enqueue a command whose response nobody awaits. Its outcome is
+        consumed here so a failure (e.g. the connection closing before the
+        response arrives) is logged rather than reported as an unretrieved
+        future exception.
+        """
+        self._enqueue_command(service, command, parameters).add_done_callback(_log_background_result)
 
     async def _send_command(self, ws: aiohttp.ClientWebSocketResponse, cmd: _Command) -> None:
         """Send a command directly on the WebSocket."""
