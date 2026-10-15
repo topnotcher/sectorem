@@ -10,7 +10,7 @@ import pytest
 
 from sectorem.errors import OrderNotFilledError, StreamError
 from sectorem.trader.constants import OptionRight, OrderStatus
-from sectorem.trader.order import Duration, OrderBuilder, OrderHandle, Session, Side
+from sectorem.trader.order import OrderBuilder, OrderHandle, Side, TimeInForce
 from sectorem.trader.types import Option
 
 
@@ -109,23 +109,24 @@ class TestBuildOptions:
         assert payload["price"] == "2.25"
 
 
-class TestSessionAndDuration:
-    def test_defaults(self):
+class TestTimeInForce:
+    def test_default_is_day(self):
         payload = make_builder().leg("AAPL", Side.BUY, 100).market().build()
         assert payload["session"] == "NORMAL"
         assert payload["duration"] == "DAY"
 
-    def test_overrides(self):
-        payload = (
-            make_builder()
-            .leg("AAPL", Side.BUY, 100)
-            .limit(150.00)
-            .session(Session.PM)
-            .duration(Duration.GTC)
-            .build()
-        )
-        assert payload["session"] == "PM"
-        assert payload["duration"] == "GOOD_TILL_CANCEL"
+    @pytest.mark.parametrize("tif, session, duration", [
+        (TimeInForce.DAY, "NORMAL", "DAY"),
+        (TimeInForce.GTC, "NORMAL", "GOOD_TILL_CANCEL"),
+        (TimeInForce.EXT, "SEAMLESS", "DAY"),
+        (TimeInForce.GTC_EXT, "SEAMLESS", "GOOD_TILL_CANCEL"),
+        (TimeInForce.AM, "AM", "DAY"),
+        (TimeInForce.PM, "PM", "DAY"),
+    ])
+    def test_maps_to_session_and_duration(self, tif, session, duration):
+        payload = make_builder().leg("AAPL", Side.BUY, 100).limit(150.00).tif(tif).build()
+        assert payload["session"] == session
+        assert payload["duration"] == duration
 
 
 class TestBuildValidation:
@@ -148,8 +149,7 @@ class TestChaining:
         builder = make_builder()
         assert builder.leg("AAPL", Side.BUY, 100) is builder
         assert builder.market() is builder
-        assert builder.session(Session.NORMAL) is builder
-        assert builder.duration(Duration.DAY) is builder
+        assert builder.tif(TimeInForce.DAY) is builder
 
 
 class TestSubmitAndPreview:

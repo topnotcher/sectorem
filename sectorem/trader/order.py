@@ -42,7 +42,7 @@ class OrderType(enum.Enum):
 
 
 class Session(enum.Enum):
-    """Trading session."""
+    """Wire value for the order's ``session`` field. See :class:`TimeInForce`."""
     NORMAL = "NORMAL"
     AM = "AM"
     PM = "PM"
@@ -50,10 +50,39 @@ class Session(enum.Enum):
 
 
 class Duration(enum.Enum):
-    """Time in force."""
+    """Wire value for the order's ``duration`` field. See :class:`TimeInForce`."""
     DAY = "DAY"
     GTC = "GOOD_TILL_CANCEL"
-    FILL_OR_KILL = "FILL_OR_KILL"
+
+
+class TimeInForce(enum.Enum):
+    """
+    Time in force, using the familiar broker vocabulary.
+
+    Schwab's API splits this into ``session`` and ``duration`` fields, but
+    the two are not independent in practice and the meaningful combinations
+    are exactly the usual TIF values. Each member carries the pair it maps to.
+    """
+    #: Regular session, good for the day.
+    DAY = (Session.NORMAL, Duration.DAY)
+    #: Regular session, good till cancelled.
+    GTC = (Session.NORMAL, Duration.GTC)
+    #: Pre-market, regular, and after-hours sessions, good for the day.
+    EXT = (Session.SEAMLESS, Duration.DAY)
+    #: Pre-market, regular, and after-hours sessions, good till cancelled.
+    GTC_EXT = (Session.SEAMLESS, Duration.GTC)
+    #: Pre-market session only.
+    AM = (Session.AM, Duration.DAY)
+    #: After-hours session only.
+    PM = (Session.PM, Duration.DAY)
+
+    @property
+    def session(self) -> Session:
+        return self.value[0]
+
+    @property
+    def duration(self) -> Duration:
+        return self.value[1]
 
 
 class Side(enum.Enum):
@@ -89,8 +118,7 @@ class OrderBuilder:
         self._account = account
         self._replaces = replaces
         self._order_type: OrderType | None = None
-        self._session: Session = Session.NORMAL
-        self._duration: Duration = Duration.DAY
+        self._tif: TimeInForce = TimeInForce.DAY
         self._price: str | None = None
         self._stop_price: str | None = None
         self._legs: list[dict[str, Any]] = []
@@ -140,14 +168,9 @@ class OrderBuilder:
         self._price = _format_price(price)
         return self
 
-    def session(self, session: Session) -> OrderBuilder:
-        """Set the trading session."""
-        self._session = session
-        return self
-
-    def duration(self, duration: Duration) -> OrderBuilder:
-        """Set the time in force."""
-        self._duration = duration
+    def tif(self, tif: TimeInForce) -> OrderBuilder:
+        """Set the time in force. Defaults to :attr:`TimeInForce.DAY`."""
+        self._tif = tif
         return self
 
     def build(self) -> dict[str, Any]:
@@ -170,8 +193,8 @@ class OrderBuilder:
 
         payload: dict[str, Any] = {
             "orderType": self._order_type.value,
-            "session": self._session.value,
-            "duration": self._duration.value,
+            "session": self._tif.session.value,
+            "duration": self._tif.duration.value,
             "orderStrategyType": "SINGLE",
             "orderLegCollection": self._legs,
         }
