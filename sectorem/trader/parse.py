@@ -8,7 +8,7 @@ from datetime import date
 from typing import Any
 
 from ..errors import InvalidApiResponseError
-from .constants import AccountType, AssetType, InstrumentType, OptionRight
+from .constants import AccountType, AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel
 from .types import (
     Balance,
     CashBalance,
@@ -27,7 +27,9 @@ from .types import (
     Option,
     OptionInstrument,
     OptionPosition,
+    OrderPreview,
     Position,
+    ValidationMessage,
 )
 
 log = logging.getLogger(__name__)
@@ -294,6 +296,68 @@ def parse_initial_balance(raw: dict, account_type: AccountType) -> InitialBalanc
 
     kwargs = _extract_fields(raw, _CASH_INITIAL_FIELDS, "cash initialBalances")
     return CashInitialBalance(**kwargs)
+
+
+def parse_order_status(raw_status: Any) -> OrderStatus:
+    """Convert a raw order status, mapping missing or unrecognized values to ``UNKNOWN``."""
+    try:
+        return OrderStatus(raw_status)
+    except ValueError:
+        log.warning("Unrecognized order status %r; treating as UNKNOWN.", raw_status)
+        return OrderStatus.UNKNOWN
+
+
+_ORDER_BALANCE_FIELDS: dict[str, str] = {
+    "orderValue": "order_value",
+    "projectedAvailableFund": "projected_available_funds",
+    "projectedBuyingPower": "projected_buying_power",
+    "projectedIntradayBuyingPower": "projected_intraday_buying_power",
+    "projectedCommission": "projected_commission",
+}
+
+
+def parse_order_preview(raw: dict) -> OrderPreview:
+    """
+    Parse a ``previewOrder`` response into an :class:`OrderPreview`.
+
+    :raises InvalidApiResponseError: If any expected fields are missing.
+    """
+    strategy = raw.get("orderStrategy")
+    if strategy is None:
+        raise InvalidApiResponseError("Missing orderStrategy in previewOrder response")
+
+    kwargs = _extract_fields(strategy.get("orderBalance", {}), _ORDER_BALANCE_FIELDS, "previewOrder orderBalance")
+    fees = raw.get("commissionAndFee", {})
+
+    return OrderPreview(
+        status=parse_order_status(strategy.get("status")),
+        commission=_sum_leg_values(fees.get("commission", {}), "commissionLegs", "commissionValues"),
+        fees=_sum_leg_values(fees.get("fee", {}), "feeLegs", "feeValues"),
+        messages=_parse_validation_messages(raw.get("orderValidationResult", {})),
+        **kwargs,
+    )
+
+
+def _sum_leg_values(section: dict, legs_key: str, values_key: str) -> float:
+    """Sum the ``value`` entries across all legs of a commission or fee section."""
+    return sum(
+        entry.get("value", 0.0)
+        for leg in section.get(legs_key, [])
+        for entry in leg.get(values_key, [])
+    )
+
+
+def _parse_validation_messages(raw: dict) -> tuple[ValidationMessage, ...]:
+    """Flatten the per-severity lists of an ``orderValidationResult``."""
+    messages = []
+    for level in OrderValidationLevel:
+        for detail in raw.get(level.value) or []:
+            messages.append(ValidationMessage(
+                level=level,
+                message=detail.get("activityMessage") or detail.get("message") or "",
+                rule=detail.get("validationRuleName"),
+            ))
+    return tuple(messages)
 
 
 def _parse_occ_symbol(occ: str) -> tuple[float, date]:

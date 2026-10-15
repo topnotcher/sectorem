@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date
 
-from .constants import AssetType, InstrumentType, OptionRight
+from .constants import AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel
 
 
 @dataclass(slots=True, frozen=True)
@@ -299,3 +299,47 @@ Balance = MarginBalance | CashBalance
 
 #: Union of initial balance types.
 InitialBalance = MarginInitialBalance | CashInitialBalance
+
+
+@dataclass(slots=True, frozen=True)
+class ValidationMessage:
+    """
+    A message from Schwab's order validation.
+
+    :param level: Severity of the message.
+    :param message: Human-readable text.
+    :param rule: Name of the validation rule that produced it, if given.
+    """
+    level: OrderValidationLevel
+    message: str
+    rule: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class OrderPreview:
+    """
+    Result of previewing an order without placing it.
+
+    From the ``previewOrder`` response. Balance and commission fields are
+    verified against live data; ``messages`` is based on the OpenAPI spec —
+    an accepted preview returns an empty ``orderValidationResult``.
+
+    :param status: Validation verdict (``ACCEPTED`` when the order would be placed).
+    :param order_value: Notional value of the order.
+    :param projected_available_funds: Available funds after the order.
+    :param projected_buying_power: Buying power after the order.
+    :param projected_intraday_buying_power: Intraday buying power after the order.
+    :param projected_commission: Commission estimate from the balance projection.
+    :param commission: Total commission across all legs.
+    :param fees: Total regulatory fees across all legs.
+    :param messages: Validation messages, if any.
+    """
+    status: OrderStatus
+    order_value: float
+    projected_available_funds: float
+    projected_buying_power: float
+    projected_intraday_buying_power: float
+    projected_commission: float
+    commission: float
+    fees: float
+    messages: tuple[ValidationMessage, ...] = ()

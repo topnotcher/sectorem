@@ -7,10 +7,14 @@ from datetime import date
 import pytest
 
 from sectorem.errors import InvalidApiResponseError
-from sectorem.trader.constants import AccountType, AssetType, InstrumentType, OptionRight
+from sectorem.trader.constants import (
+    AccountType, AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel,
+)
 from sectorem.trader.parse import (
     parse_balance,
     parse_initial_balance,
+    parse_order_preview,
+    parse_order_status,
     parse_position,
     _parse_occ_symbol,
 )
@@ -23,6 +27,8 @@ from sectorem.trader.types import (
     MarginInitialBalance,
     OptionInstrument,
     OptionPosition,
+    OrderPreview,
+    ValidationMessage,
 )
 
 
@@ -395,3 +401,98 @@ class TestParseCashInitialBalance:
         raw = {k: v for k, v in self._CASH_INITIAL_RAW.items() if k != "isInCall"}
         with pytest.raises(InvalidApiResponseError, match="isInCall"):
             parse_initial_balance(raw, AccountType.CASH)
+
+
+# Captured from a live previewOrder of a 1-share limit BUY (2026-10-14), trimmed.
+PREVIEW_RAW = {
+    "orderId": 0,
+    "orderStrategy": {
+        "accountNumber": "38111942",
+        "orderBalance": {
+            "orderValue": 6.0,
+            "projectedAvailableFund": 138871.0,
+            "projectedBuyingPower": 277742.0,
+            "projectedCommission": 0.0,
+            "projectedIntradayBuyingPower": -6.0,
+        },
+        "orderStrategyType": "SINGLE",
+        "status": "ACCEPTED",
+        "orderType": "LIMIT",
+        "price": 6.0,
+        "quantity": 1.0,
+        "orderLegs": [{"legId": 1, "assetType": "EQUITY", "instruction": "BUY",
+                       "instrument": {"assetType": "EQUITY", "symbol": "F"}}],
+    },
+    "orderValidationResult": {},
+    "commissionAndFee": {
+        "commission": {"commissionLegs": [{"commissionValues": [
+            {"value": 0.0, "type": "BASE_CHARGE"}, {"value": 0.65, "type": "COMMISSION"},
+        ]}]},
+        "fee": {"feeLegs": [{"feeValues": [
+            {"value": 0.01, "type": "SEC_FEE"}, {"value": 0.0, "type": "OPT_REG_FEE"}, {"value": 0.02, "type": "TAF_FEE"},
+        ]}]},
+        "trueCommission": {"commissionLegs": [{"commissionValues": [{"value": 0.0, "type": "COMMISSION"}]}]},
+    },
+}
+
+
+class TestParseOrderStatus:
+    def test_known(self):
+        assert parse_order_status("WORKING") is OrderStatus.WORKING
+
+    def test_unrecognized_is_unknown(self):
+        assert parse_order_status("SOMETHING_NEW") is OrderStatus.UNKNOWN
+
+    def test_missing_is_unknown(self):
+        assert parse_order_status(None) is OrderStatus.UNKNOWN
+
+
+class TestParseOrderPreview:
+    def test_accepted_preview(self):
+        preview = parse_order_preview(PREVIEW_RAW)
+
+        assert isinstance(preview, OrderPreview)
+        assert preview.status is OrderStatus.ACCEPTED
+        assert preview.order_value == 6.0
+        assert preview.projected_available_funds == 138871.0
+        assert preview.projected_buying_power == 277742.0
+        assert preview.projected_intraday_buying_power == -6.0
+        assert preview.projected_commission == 0.0
+        assert preview.commission == pytest.approx(0.65)
+        assert preview.fees == pytest.approx(0.03)
+        assert preview.messages == ()
+
+    def test_validation_messages(self):
+        raw = {
+            **PREVIEW_RAW,
+            "orderStrategy": {**PREVIEW_RAW["orderStrategy"], "status": "REJECTED"},
+            "orderValidationResult": {
+                "rejects": [{"validationRuleName": "BP_CHECK", "activityMessage": "Insufficient buying power"}],
+                "warns": [{"message": "Order is far from market"}],
+                "alerts": [],
+            },
+        }
+
+        preview = parse_order_preview(raw)
+
+        assert preview.status is OrderStatus.REJECTED
+        assert preview.messages == (
+            ValidationMessage(OrderValidationLevel.REJECT, "Insufficient buying power", "BP_CHECK"),
+            ValidationMessage(OrderValidationLevel.WARN, "Order is far from market"),
+        )
+
+    def test_missing_commission_section_is_zero(self):
+        raw = {k: v for k, v in PREVIEW_RAW.items() if k != "commissionAndFee"}
+        preview = parse_order_preview(raw)
+        assert preview.commission == 0.0
+        assert preview.fees == 0.0
+
+    def test_missing_balance_field_raises(self):
+        strategy = {**PREVIEW_RAW["orderStrategy"]}
+        strategy["orderBalance"] = {k: v for k, v in strategy["orderBalance"].items() if k != "projectedBuyingPower"}
+        with pytest.raises(InvalidApiResponseError, match="projectedBuyingPower"):
+            parse_order_preview({**PREVIEW_RAW, "orderStrategy": strategy})
+
+    def test_missing_strategy_raises(self):
+        with pytest.raises(InvalidApiResponseError, match="orderStrategy"):
+            parse_order_preview({"orderId": 0})

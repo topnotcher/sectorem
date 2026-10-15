@@ -10,7 +10,8 @@ from typing import TYPE_CHECKING, Any
 from ..errors import OrderNotFilledError, StreamError
 from ..stream.fields import AccountActivityField, StreamService
 from .constants import AssetType, OrderStatus
-from .types import Option
+from .parse import parse_order_status
+from .types import Option, OrderPreview
 
 if TYPE_CHECKING:
     from ..stream import Subscription
@@ -194,7 +195,7 @@ class OrderBuilder:
             return await self._account._submit_order(payload)
         return await self._account._replace_order(self._replaces, payload)
 
-    async def preview(self) -> dict:
+    async def preview(self) -> OrderPreview:
         """Build and preview the order without placing it."""
         payload = self.build()
         return await self._account._preview_order(payload)
@@ -222,7 +223,7 @@ class OrderHandle:
 
     async def status(self) -> OrderStatus:
         """Fetch the current order status from the API."""
-        return _parse_status(await self.fetch())
+        return parse_order_status((await self.fetch()).get("status"))
 
     async def cancel(self) -> None:
         """Cancel the order."""
@@ -273,7 +274,7 @@ class OrderHandle:
                     # Clear before polling so events that race the poll are retained.
                     nudge.clear()
                     order = await self.fetch()
-                    status = _parse_status(order)
+                    status = parse_order_status(order.get("status"))
 
                     if status is OrderStatus.FILLED:
                         return order
@@ -318,16 +319,6 @@ class OrderHandle:
         except (StreamError, TimeoutError):
             log.warning("ACCT_ACTIVITY subscription failed; falling back to polling.", exc_info=True)
             return None
-
-
-def _parse_status(order: dict) -> OrderStatus:
-    """Extract the order status, mapping missing or unrecognized values to ``UNKNOWN``."""
-    raw = order.get("status")
-    try:
-        return OrderStatus(raw)
-    except ValueError:
-        log.warning("Unrecognized order status %r; treating as UNKNOWN.", raw)
-        return OrderStatus.UNKNOWN
 
 
 def _format_price(price: float) -> str:

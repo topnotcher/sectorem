@@ -8,8 +8,8 @@ from ..auth import AuthProvider
 from ..rest import RestClient
 from .constants import AccountType
 from .order import OrderBuilder, OrderHandle, Side
-from .types import Balance, InitialBalance, Option, Position
-from .parse import parse_balance, parse_initial_balance, parse_position
+from .types import Balance, InitialBalance, Option, OrderPreview, Position
+from .parse import parse_balance, parse_initial_balance, parse_order_preview, parse_position
 
 if TYPE_CHECKING:
     from ..stream import StreamClient
@@ -167,9 +167,10 @@ class Account:
         order = await self._client.put(f"accounts/{self._account_hash}/orders/{order_id}", json=payload)
         return OrderHandle(self, order["orderId"])
 
-    async def _preview_order(self, payload: dict[str, Any]) -> dict:
+    async def _preview_order(self, payload: dict[str, Any]) -> OrderPreview:
         """Preview an order without placing it."""
-        return await self._client.post(f"accounts/{self._account_hash}/previewOrder", json=payload)
+        raw = await self._client.post(f"accounts/{self._account_hash}/previewOrder", json=payload)
+        return parse_order_preview(raw)
 
     async def _get_order(self, order_id: int) -> dict:
         """Fetch a single order's status from the API."""

@@ -168,12 +168,13 @@ class TestSubmitAndPreview:
     @pytest.mark.asyncio
     async def test_preview_passes_payload_to_account(self):
         account = AsyncMock()
-        account._preview_order.return_value = {"price": "150.00"}
+        preview = object()
+        account._preview_order.return_value = preview
 
         builder = OrderBuilder(account).leg("AAPL", Side.BUY, 100).limit(150.00)
         result = await builder.preview()
 
-        assert result == {"price": "150.00"}
+        assert result is preview
         account._preview_order.assert_awaited_once_with(builder.build())
 
     @pytest.mark.asyncio

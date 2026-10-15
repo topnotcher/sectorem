@@ -87,6 +87,15 @@ class OrderStatus(enum.Enum):
         return self in _TERMINAL_ORDER_STATUSES
 
 
+class OrderValidationLevel(enum.Enum):
+    """Severity of an order validation message. Values are the ``orderValidationResult`` list keys."""
+    ACCEPT = "accepts"
+    ALERT = "alerts"
+    REJECT = "rejects"
+    REVIEW = "reviews"
+    WARN = "warns"
+
+
 _TERMINAL_ORDER_STATUSES = frozenset({
     OrderStatus.FILLED,
     OrderStatus.CANCELED,
