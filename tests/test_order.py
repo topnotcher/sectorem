@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from sectorem.errors import OrderNotFilledError, StreamError
+from sectorem.errors import OrderError, OrderNotFilledError, OrderTimeoutError, StreamError
 from sectorem.trader.constants import OptionRight, OrderStatus
 from sectorem.trader.order import OrderBuilder, OrderHandle, Side, TimeInForce
-from sectorem.trader.types import Option
+from sectorem.trader.types import Option, OrderResult
 
 
 def make_builder() -> OrderBuilder:
@@ -231,11 +231,19 @@ class FakeStream:
         return FakeSubscription(self)
 
 
-def make_wait_handle(statuses: list[str], stream: FakeStream | None = None) -> tuple[OrderHandle, AsyncMock]:
-    """An OrderHandle whose account returns the given order statuses in sequence."""
+def order_record(status: str, filled: float = 0.0, quantity: float = 1.0) -> dict:
+    """A minimal GET order response."""
+    return {
+        "orderId": 42, "status": status, "quantity": quantity,
+        "filledQuantity": filled, "remainingQuantity": quantity - filled,
+    }
+
+
+def make_wait_handle(statuses: list[str | dict], stream: FakeStream | None = None) -> tuple[OrderHandle, AsyncMock]:
+    """An OrderHandle whose account returns the given order records (or statuses) in sequence."""
     account = AsyncMock()
     account._stream = stream
-    account._get_order.side_effect = [{"orderId": 42, "status": s} for s in statuses]
+    account._get_order.side_effect = [s if isinstance(s, dict) else order_record(s) for s in statuses]
     return OrderHandle(account, 42), account
 
 
@@ -260,9 +268,10 @@ class TestWaitPolling:
     async def test_returns_final_order_on_fill(self):
         handle, account = make_wait_handle(["WORKING", "FILLED"])
 
-        order = await handle.wait(poll_interval=0.001)
+        result = await handle.wait(poll_interval=0.001)
 
-        assert order["status"] == "FILLED"
+        assert isinstance(result, OrderResult)
+        assert result.status is OrderStatus.FILLED
         assert account._get_order.await_count == 2
 
     @pytest.mark.asyncio
@@ -273,20 +282,48 @@ class TestWaitPolling:
         with pytest.raises(OrderNotFilledError) as exc_info:
             await handle.wait(poll_interval=0.001)
 
+        assert isinstance(exc_info.value, OrderError)
         assert exc_info.value.order_id == 42
         assert exc_info.value.status is OrderStatus(status)
-        assert exc_info.value.order["status"] == status
+        assert exc_info.value.result.status is OrderStatus(status)
+        assert exc_info.value.result.filled_quantity == 0.0
+
+    @pytest.mark.asyncio
+    async def test_partial_fill_then_canceled_reports_fill(self):
+        handle, _ = make_wait_handle(["WORKING", order_record("CANCELED", filled=40, quantity=100)])
+
+        with pytest.raises(OrderNotFilledError) as exc_info:
+            await handle.wait(poll_interval=0.001)
+
+        assert exc_info.value.result.filled_quantity == 40
+        assert "40 of 100 filled" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_timeout_raises(self):
         account = AsyncMock()
         account._stream = None
         account._get_order.side_effect = None
-        account._get_order.return_value = {"orderId": 42, "status": "WORKING"}
+        account._get_order.return_value = order_record("WORKING", filled=0.5)
         handle = OrderHandle(account, 42)
 
-        with pytest.raises(TimeoutError):
+        with pytest.raises(OrderTimeoutError) as exc_info:
             await handle.wait(timeout=0.05, poll_interval=0.01)
+
+        # Still catchable the generic way, and carries the last snapshot.
+        assert isinstance(exc_info.value, TimeoutError)
+        assert isinstance(exc_info.value, OrderError)
+        assert exc_info.value.status is OrderStatus.WORKING
+        assert exc_info.value.result.filled_quantity == 0.5
+        assert exc_info.value.timeout == 0.05
+
+    @pytest.mark.asyncio
+    async def test_partial_fill_does_not_end_wait(self):
+        handle, account = make_wait_handle([order_record("WORKING", filled=40, quantity=100), "FILLED"])
+
+        result = await handle.wait(poll_interval=0.001)
+
+        assert result.status is OrderStatus.FILLED
+        assert account._get_order.await_count == 2
 
     @pytest.mark.asyncio
     async def test_unknown_status_raises(self):
@@ -312,7 +349,13 @@ class TestStatus:
     @pytest.mark.asyncio
     async def test_fetch_returns_raw_order(self):
         handle, _ = make_wait_handle(["WORKING"])
-        assert await handle.fetch() == {"orderId": 42, "status": "WORKING"}
+        assert await handle.fetch() == order_record("WORKING")
+
+    @pytest.mark.asyncio
+    async def test_result_is_typed(self):
+        handle, _ = make_wait_handle([order_record("WORKING", filled=1, quantity=3)])
+        result = await handle.result()
+        assert result == OrderResult(42, OrderStatus.WORKING, 3, 1, 2)
 
 
 class TestWaitStream:
@@ -326,8 +369,8 @@ class TestWaitStream:
         await wait_until(lambda: account._get_order.await_count == 1)
         stream.callback(activity_event(42))
 
-        order = await asyncio.wait_for(task, timeout=1)
-        assert order["status"] == "FILLED"
+        result = await asyncio.wait_for(task, timeout=1)
+        assert result.status is OrderStatus.FILLED
         assert stream.cancelled
 
     @pytest.mark.asyncio
@@ -342,8 +385,8 @@ class TestWaitStream:
         assert account._get_order.await_count == 1
 
         stream.callback(activity_event(42))
-        order = await asyncio.wait_for(task, timeout=1)
-        assert order["status"] == "FILLED"
+        result = await asyncio.wait_for(task, timeout=1)
+        assert result.status is OrderStatus.FILLED
 
     @pytest.mark.asyncio
     async def test_unparseable_event_still_wakes(self):
@@ -354,8 +397,8 @@ class TestWaitStream:
         await wait_until(lambda: account._get_order.await_count == 1)
         stream.callback({"service": "ACCT_ACTIVITY", "fields": {"message_data": "unparsed"}})
 
-        order = await asyncio.wait_for(task, timeout=1)
-        assert order["status"] == "FILLED"
+        result = await asyncio.wait_for(task, timeout=1)
+        assert result.status is OrderStatus.FILLED
 
     @pytest.mark.asyncio
     async def test_subscribes_to_acct_activity(self):
@@ -382,7 +425,7 @@ class TestWaitStream:
         stream = FakeStream(fail=True)
         handle, account = make_wait_handle(["WORKING", "FILLED"], stream=stream)
 
-        order = await handle.wait(poll_interval=0.001)
+        result = await handle.wait(poll_interval=0.001)
 
-        assert order["status"] == "FILLED"
+        assert result.status is OrderStatus.FILLED
         assert account._get_order.await_count == 2

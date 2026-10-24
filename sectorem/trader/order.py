@@ -7,11 +7,11 @@ import enum
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..errors import OrderNotFilledError, StreamError
+from ..errors import OrderNotFilledError, OrderTimeoutError, StreamError
 from ..stream.fields import AccountActivityField, StreamService
 from .constants import AssetType, OrderStatus
-from .parse import parse_order_status
-from .types import Option, OrderPreview
+from .parse import parse_order_result
+from .types import Option, OrderPreview, OrderResult
 
 if TYPE_CHECKING:
     from ..stream import Subscription
@@ -228,8 +228,8 @@ class OrderHandle:
     """
     A handle to a submitted order.
 
-    Returned by :meth:`OrderBuilder.submit`. Use it to check status or
-    cancel the order.
+    Returned by :meth:`OrderBuilder.submit`. Use it to check on, wait for,
+    replace, or cancel the order.
     """
 
     def __init__(self, account: Account, order_id: int) -> None:
@@ -241,12 +241,16 @@ class OrderHandle:
         return f"OrderHandle(order_id={self.order_id!r})"
 
     async def fetch(self) -> dict:
-        """Fetch the full order record from the API."""
+        """Fetch the raw order record from the API. Prefer :meth:`result`."""
         return await self._account._get_order(self.order_id)
+
+    async def result(self) -> OrderResult:
+        """Fetch the order's current state from the API."""
+        return parse_order_result(await self.fetch())
 
     async def status(self) -> OrderStatus:
         """Fetch the current order status from the API."""
-        return parse_order_status((await self.fetch()).get("status"))
+        return (await self.result()).status
 
     async def cancel(self) -> None:
         """Cancel the order."""
@@ -266,9 +270,9 @@ class OrderHandle:
         """
         return self._account._order_builder(symbol, side, quantity, replaces=self.order_id)
 
-    async def wait(self, *, timeout: float | None = None, poll_interval: float | None = None) -> dict:
+    async def wait(self, *, timeout: float | None = None, poll_interval: float | None = None) -> OrderResult:
         """
-        Wait for the order to fill.
+        Wait for the order to fill completely.
 
         The order status is polled until it reaches a terminal state. When the
         trader client has a streaming client attached, ``ACCT_ACTIVITY`` events
@@ -278,36 +282,53 @@ class OrderHandle:
         the source of truth — stream events only accelerate the next check, so
         orders that don't stream (e.g. EXTO) still resolve via polling.
 
+        Partial fills do not end the wait; Schwab keeps a partially filled
+        order ``WORKING``. They are reported through ``filled_quantity`` on the
+        result carried by either exception.
+
         :param timeout: Maximum seconds to wait, or ``None`` to wait indefinitely.
         :param poll_interval: Seconds between status polls. Defaults as described above.
-        :return: The final order dict, with status ``FILLED``.
+        :return: The order's final state, with status ``FILLED``.
         :raises OrderNotFilledError: If the order reaches a terminal state other
             than filled (canceled, rejected, expired, replaced, or unknown).
-        :raises TimeoutError: If *timeout* elapses first. The order is left open.
+            The result it carries is final.
+        :raises OrderTimeoutError: If *timeout* elapses first. The order is left
+            working; the result it carries is a snapshot.
         """
+        result = await self._wait_terminal(timeout, poll_interval)
+        if result.status is not OrderStatus.FILLED:
+            raise OrderNotFilledError(result)
+        return result
+
+    async def _wait_terminal(self, timeout: float | None, poll_interval: float | None) -> OrderResult:
+        """Poll (nudged by stream events) until the order reaches any terminal state."""
         nudge = asyncio.Event()
         subscription = await self._subscribe_activity(nudge)
 
         if poll_interval is None:
             poll_interval = POLL_INTERVAL if subscription is None else STREAM_POLL_INTERVAL
 
+        result: OrderResult | None = None
         try:
-            async with asyncio.timeout(timeout):
-                while True:
-                    # Clear before polling so events that race the poll are retained.
-                    nudge.clear()
-                    order = await self.fetch()
-                    status = parse_order_status(order.get("status"))
+            try:
+                async with asyncio.timeout(timeout):
+                    while True:
+                        # Clear before polling so events that race the poll are retained.
+                        nudge.clear()
+                        result = await self.result()
+                        if result.status.is_terminal:
+                            return result
 
-                    if status is OrderStatus.FILLED:
-                        return order
-                    if status.is_terminal:
-                        raise OrderNotFilledError(self.order_id, status, order)
-
-                    try:
-                        await asyncio.wait_for(nudge.wait(), timeout=poll_interval)
-                    except TimeoutError:
-                        pass
+                        try:
+                            await asyncio.wait_for(nudge.wait(), timeout=poll_interval)
+                        except TimeoutError:
+                            pass
+            except TimeoutError:
+                if timeout is None:
+                    raise  # Not ours: asyncio.timeout(None) never expires.
+                if result is None:
+                    result = await self.result()
+                raise OrderTimeoutError(result, timeout) from None
         finally:
             if subscription is not None:
                 await subscription.cancel()

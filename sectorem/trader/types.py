@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime
 
 from .constants import AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel
 
@@ -341,3 +341,60 @@ class OrderPreview:
     commission: float
     fees: float
     messages: tuple[ValidationMessage, ...] = ()
+
+
+@dataclass(slots=True, frozen=True)
+class Execution:
+    """
+    A single execution (fill) against an order leg.
+
+    :param leg_id: Which leg of the order was filled.
+    :param quantity: Shares or contracts filled in this execution.
+    :param price: Execution price per unit.
+    :param time: When the execution occurred.
+    """
+    leg_id: int
+    quantity: float
+    price: float
+    time: datetime
+
+
+@dataclass(slots=True, frozen=True)
+class OrderResult:
+    """
+    The state of a submitted order as last read from the API.
+
+    Returned by :meth:`~sectorem.trader.order.OrderHandle.wait` and
+    :meth:`~sectorem.trader.order.OrderHandle.result`, and carried by
+    :class:`~sectorem.errors.OrderError`. Schwab has no partial-fill status:
+    a partially filled order stays ``WORKING`` and, if it then expires or is
+    canceled, ends ``CANCELED`` or ``EXPIRED`` with a non-zero
+    ``filled_quantity``. Always read ``filled_quantity`` rather than inferring
+    fills from ``status``.
+
+    :param order_id: The Schwab order ID.
+    :param status: Order status at the time of the read.
+    :param quantity: Quantity requested.
+    :param filled_quantity: Quantity filled so far.
+    :param remaining_quantity: Quantity still open.
+    :param executions: Individual fills, in the order the API reported them.
+    """
+    order_id: int
+    status: OrderStatus
+    quantity: float
+    filled_quantity: float
+    remaining_quantity: float
+    executions: tuple[Execution, ...] = ()
+
+    @property
+    def average_price(self) -> float | None:
+        """
+        Quantity-weighted average execution price, or ``None`` if nothing has filled.
+
+        For multi-leg orders this averages across legs and is rarely meaningful;
+        use :attr:`executions` instead.
+        """
+        filled = sum(e.quantity for e in self.executions)
+        if not filled:
+            return None
+        return sum(e.quantity * e.price for e in self.executions) / filled

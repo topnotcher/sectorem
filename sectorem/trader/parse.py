@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import enum
 import logging
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from ..errors import InvalidApiResponseError
@@ -17,6 +17,7 @@ from .types import (
     CollectiveInvestmentPosition,
     CurrencyPosition,
     EquityPosition,
+    Execution,
     FixedIncomePosition,
     IndexPosition,
     InitialBalance,
@@ -28,6 +29,7 @@ from .types import (
     OptionInstrument,
     OptionPosition,
     OrderPreview,
+    OrderResult,
     Position,
     ValidationMessage,
 )
@@ -305,6 +307,52 @@ def parse_order_status(raw_status: Any) -> OrderStatus:
     except ValueError:
         log.warning("Unrecognized order status %r; treating as UNKNOWN.", raw_status)
         return OrderStatus.UNKNOWN
+
+
+_ORDER_RESULT_FIELDS: dict[str, str] = {
+    "orderId": "order_id",
+    "quantity": "quantity",
+    "filledQuantity": "filled_quantity",
+    "remainingQuantity": "remaining_quantity",
+}
+
+_EXECUTION_FIELDS: dict[str, str] = {
+    "legId": "leg_id",
+    "quantity": "quantity",
+    "price": "price",
+    "time": "time",
+}
+
+
+def parse_order_result(raw: dict) -> OrderResult:
+    """
+    Parse an order record from ``GET /accounts/{hash}/orders/{id}``.
+
+    Executions come from ``orderActivityCollection``. Only ``EXECUTION``
+    activities of type ``FILL`` count; Schwab also records a ``CANCELED``
+    activity with a zero price when an order is canceled.
+
+    :raises InvalidApiResponseError: If required fields are missing.
+    """
+    fields = _extract_fields(raw, _ORDER_RESULT_FIELDS, "order")
+    executions: list[Execution] = []
+    for activity in raw.get("orderActivityCollection", []):
+        if activity.get("activityType") != "EXECUTION" or activity.get("executionType") != "FILL":
+            continue
+        for leg in activity.get("executionLegs", []):
+            leg_fields = _extract_fields(leg, _EXECUTION_FIELDS, "execution leg")
+            leg_fields["time"] = _parse_timestamp(leg_fields["time"])
+            executions.append(Execution(**leg_fields))
+
+    return OrderResult(status=parse_order_status(raw.get("status")), executions=tuple(executions), **fields)
+
+
+def _parse_timestamp(raw: Any) -> datetime:
+    """Parse a Schwab timestamp such as ``2026-10-15T17:05:24+0000``."""
+    try:
+        return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%S%z")
+    except (TypeError, ValueError) as e:
+        raise InvalidApiResponseError(f"Unparseable timestamp {raw!r}") from e
 
 
 _ORDER_BALANCE_FIELDS: dict[str, str] = {

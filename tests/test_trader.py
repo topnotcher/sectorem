@@ -599,6 +599,11 @@ class TestAccount:
         assert account.is_margin is False
 
 
+def _order_json(status: str, filled: float = 0.0) -> dict:
+    """A minimal GET order response."""
+    return {"orderId": 1003, "status": status, "quantity": 1, "filledQuantity": filled, "remainingQuantity": 1 - filled}
+
+
 class TestAccountOrders:
     @staticmethod
     def _base_app():
@@ -643,7 +648,7 @@ class TestAccountOrders:
     @pytest.mark.asyncio
     async def test_handle_status(self, mock_auth, aiohttp_server):
         async def order_handler(request):
-            return web.json_response({"orderId": 1003, "status": "FILLED"})
+            return web.json_response(_order_json("FILLED", filled=1))
 
         app = self._base_app()
         app.router.add_get("/trader/v1/accounts/abc/orders/1003", order_handler)
@@ -712,7 +717,7 @@ class TestAccountOrders:
             nonlocal calls
             calls += 1
             status = "FILLED" if calls >= 2 else "WORKING"
-            return web.json_response({"orderId": 1003, "status": status})
+            return web.json_response(_order_json(status, filled=1 if status == "FILLED" else 0))
 
         app = self._base_app()
         app.router.add_get("/trader/v1/accounts/abc/orders/1003", order_handler)
@@ -721,7 +726,7 @@ class TestAccountOrders:
         client = TraderClient(mock_auth)
         client._base_url = str(server.make_url("/trader/v1"))
         account = await client.get_account("123")
-        order = await OrderHandle(account, 1003).wait(poll_interval=0.001)
+        result = await OrderHandle(account, 1003).wait(poll_interval=0.001)
 
-        assert order["status"] == "FILLED"
+        assert result.status is OrderStatus.FILLED
         assert calls == 2

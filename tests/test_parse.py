@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pytest
 
@@ -11,6 +11,7 @@ from sectorem.trader.constants import (
     AccountType, AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel,
 )
 from sectorem.trader.parse import (
+    parse_order_result,
     parse_balance,
     parse_initial_balance,
     parse_order_preview,
@@ -19,6 +20,8 @@ from sectorem.trader.parse import (
     _parse_occ_symbol,
 )
 from sectorem.trader.types import (
+    Execution,
+    OrderResult,
     CashBalance,
     CashInitialBalance,
     CollectiveInvestmentPosition,
@@ -502,3 +505,78 @@ class TestParseOrderPreview:
     def test_missing_strategy_raises(self):
         with pytest.raises(InvalidApiResponseError, match="orderStrategy"):
             parse_order_preview({"orderId": 0})
+
+
+# Trimmed from live GET order responses (2026-10-15): a filled buy and a canceled sell.
+FILLED_RAW = {
+    "session": "SEAMLESS", "duration": "DAY", "orderType": "LIMIT",
+    "quantity": 1.0, "filledQuantity": 1.0, "remainingQuantity": 0.0,
+    "price": 12.31, "orderId": 1008313463083, "status": "FILLED",
+    "enteredTime": "2026-10-15T16:40:45+0000", "closeTime": "2026-10-15T16:40:45+0000",
+    "orderActivityCollection": [{
+        "activityType": "EXECUTION", "activityId": 133611273335, "executionType": "FILL",
+        "quantity": 1.0, "orderRemainingQuantity": 0.0,
+        "executionLegs": [{
+            "legId": 1, "quantity": 1.0, "mismarkedQuantity": 0.0, "price": 12.2599,
+            "time": "2026-10-15T16:40:45+0000", "instrumentId": 2947182,
+        }],
+    }],
+}
+
+CANCELED_RAW = {
+    "quantity": 1.0, "filledQuantity": 0.0, "remainingQuantity": 0.0,
+    "price": 12.28, "orderId": 1008313937814, "status": "CANCELED",
+    "orderActivityCollection": [{
+        "activityType": "EXECUTION", "activityId": 133616427986, "executionType": "CANCELED",
+        "quantity": 1.0, "orderRemainingQuantity": 0.0,
+        "executionLegs": [{
+            "legId": 1, "quantity": 1.0, "mismarkedQuantity": 0.0, "price": 0.0,
+            "time": "2026-10-15T17:05:24+0000", "instrumentId": 2947182,
+        }],
+    }],
+}
+
+
+class TestParseOrderResult:
+    def test_filled(self):
+        result = parse_order_result(FILLED_RAW)
+
+        assert result == OrderResult(
+            order_id=1008313463083, status=OrderStatus.FILLED,
+            quantity=1.0, filled_quantity=1.0, remaining_quantity=0.0,
+            executions=(Execution(1, 1.0, 12.2599, datetime(2026, 10, 15, 16, 40, 45, tzinfo=timezone.utc)),),
+        )
+        assert result.average_price == pytest.approx(12.2599)
+
+    def test_canceled_activity_is_not_an_execution(self):
+        result = parse_order_result(CANCELED_RAW)
+
+        assert result.status is OrderStatus.CANCELED
+        assert result.executions == ()
+        assert result.average_price is None
+
+    def test_average_price_is_quantity_weighted(self):
+        t = datetime(2026, 10, 15, tzinfo=timezone.utc)
+        result = OrderResult(1, OrderStatus.FILLED, 3, 3, 0, (Execution(1, 1, 10.0, t), Execution(1, 2, 13.0, t)))
+        assert result.average_price == pytest.approx(12.0)
+
+    def test_working_without_activity(self):
+        result = parse_order_result({"orderId": 7, "status": "WORKING", "quantity": 5, "filledQuantity": 0, "remainingQuantity": 5})
+        assert result.status is OrderStatus.WORKING
+        assert result.executions == ()
+
+    def test_unrecognized_status_is_unknown(self):
+        result = parse_order_result({**FILLED_RAW, "status": "NEW_THING"})
+        assert result.status is OrderStatus.UNKNOWN
+
+    def test_missing_field_raises(self):
+        with pytest.raises(InvalidApiResponseError, match="filledQuantity"):
+            parse_order_result({"orderId": 7, "status": "WORKING", "quantity": 5, "remainingQuantity": 5})
+
+    def test_bad_timestamp_raises(self):
+        raw = {**FILLED_RAW, "orderActivityCollection": [{
+            **FILLED_RAW["orderActivityCollection"][0],
+            "executionLegs": [{**FILLED_RAW["orderActivityCollection"][0]["executionLegs"][0], "time": "yesterday"}],
+        }]}
+        with pytest.raises(InvalidApiResponseError, match="timestamp"):
+            parse_order_result(raw)

@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .trader.constants import OrderStatus
+    from .trader.types import OrderResult
 
 
 class SectoremError(Exception):
@@ -118,21 +119,71 @@ class StreamError(SectoremError):
     """Raised when the streaming connection encounters an error."""
 
 
-class OrderNotFilledError(SectoremError):
+class OrderError(SectoremError):
     """
-    Raised when an awaited order reaches a terminal state other than filled.
+    Base for errors about the progress of a submitted order.
 
-    :param order_id: The Schwab order ID.
-    :param status: The terminal status the order reached.
-    :param order: The final order dict from the API.
+    Raised by :meth:`~sectorem.trader.order.OrderHandle.wait` and
+    :meth:`~sectorem.trader.order.OrderHandle.cancel`. ``result`` carries the
+    order as last read from the API, including any partial fills; see the
+    subclasses for whether it is final.
+
+    :param result: The order's last known state.
+    :param message: Human-readable description.
     """
 
-    def __init__(self, order_id: int, status: OrderStatus, order: dict) -> None:
-        #: The Schwab order ID.
-        self.order_id = order_id
-        #: The terminal status the order reached.
-        self.status = status
-        #: The final order dict from the API.
-        self.order = order
+    def __init__(self, result: OrderResult, message: str) -> None:
+        #: The order as last read from the API.
+        self.result = result
+        super().__init__(message)
 
-        super().__init__(f"Order {order_id} is {status.value}; it will not fill")
+    @property
+    def order_id(self) -> int:
+        """The Schwab order ID."""
+        return self.result.order_id
+
+    @property
+    def status(self) -> OrderStatus:
+        """The order status when the error was raised."""
+        return self.result.status
+
+
+class OrderNotFilledError(OrderError):
+    """
+    Raised when an awaited order reaches a terminal state other than ``FILLED``.
+
+    The order is no longer working, so ``result`` is final. "Not filled" means
+    not completely filled: a day order that partially filled before expiring
+    raises this with a non-zero ``result.filled_quantity``.
+    """
+
+    def __init__(self, result: OrderResult) -> None:
+        super().__init__(
+            result, f"Order {result.order_id} is {result.status.value}; it will not fill{_fill_summary(result)}",
+        )
+
+
+class OrderTimeoutError(OrderError, TimeoutError):
+    """
+    Raised when waiting on an order exceeds the caller's timeout.
+
+    The order is still working, so ``result`` is only a snapshot: more can fill
+    between the last read and whatever the caller does next.
+
+    :param result: The order as last read before the timeout.
+    :param timeout: The timeout that elapsed, in seconds.
+    """
+
+    def __init__(self, result: OrderResult, timeout: float) -> None:
+        #: The timeout that elapsed, in seconds.
+        self.timeout = timeout
+        super().__init__(
+            result,
+            f"Order {result.order_id} is still {result.status.value} after {timeout:g}s{_fill_summary(result)}",
+        )
+
+
+def _fill_summary(result: OrderResult) -> str:
+    if result.filled_quantity:
+        return f" ({result.filled_quantity:g} of {result.quantity:g} filled)"
+    return ""
