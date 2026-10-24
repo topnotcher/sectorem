@@ -364,7 +364,8 @@ class OrderResult:
     """
     The state of a submitted order as last read from the API.
 
-    Returned by :meth:`~sectorem.trader.order.OrderHandle.wait` and
+    Returned by :meth:`~sectorem.trader.order.OrderHandle.wait`,
+    :meth:`~sectorem.trader.order.OrderHandle.cancel`, and
     :meth:`~sectorem.trader.order.OrderHandle.result`, and carried by
     :class:`~sectorem.errors.OrderError`. Schwab has no partial-fill status:
     a partially filled order stays ``WORKING`` and, if it then expires or is

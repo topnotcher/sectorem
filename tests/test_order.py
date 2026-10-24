@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from sectorem.errors import OrderError, OrderNotFilledError, OrderTimeoutError, StreamError
+from sectorem.errors import ApiError, OrderError, OrderNotFilledError, OrderTimeoutError, StreamError
 from sectorem.trader.constants import OptionRight, OrderStatus
 from sectorem.trader.order import OrderBuilder, OrderHandle, Side, TimeInForce
 from sectorem.trader.types import Option, OrderResult
@@ -356,6 +356,65 @@ class TestStatus:
         handle, _ = make_wait_handle([order_record("WORKING", filled=1, quantity=3)])
         result = await handle.result()
         assert result == OrderResult(42, OrderStatus.WORKING, 3, 1, 2)
+
+
+class TestCancel:
+    @pytest.mark.asyncio
+    async def test_waits_for_terminal_and_returns_result(self):
+        handle, account = make_wait_handle(["PENDING_CANCEL", order_record("CANCELED", filled=40, quantity=100)])
+
+        result = await handle.cancel(poll_interval=0.001)
+
+        account._cancel_order.assert_awaited_once_with(42)
+        assert result.status is OrderStatus.CANCELED
+        assert result.filled_quantity == 40
+        assert account._get_order.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_filled_during_cancel_returns_filled(self):
+        handle, _ = make_wait_handle(["FILLED"])
+
+        result = await handle.cancel(poll_interval=0.001)
+
+        assert result.status is OrderStatus.FILLED
+
+    @pytest.mark.asyncio
+    async def test_already_terminal_returns_result(self):
+        # Live response for a finished order (2026-10-24).
+        handle, account = make_wait_handle([order_record("FILLED", filled=1)])
+        account._cancel_order.side_effect = ApiError(400, "Order in state FILLED cannot be canceled")
+
+        result = await handle.cancel()
+
+        assert result.status is OrderStatus.FILLED
+
+    @pytest.mark.asyncio
+    async def test_400_on_working_order_is_reraised(self):
+        handle, account = make_wait_handle(["WORKING"])
+        account._cancel_order.side_effect = ApiError(400, "Something else is wrong")
+
+        with pytest.raises(ApiError, match="Something else"):
+            await handle.cancel()
+
+    @pytest.mark.asyncio
+    async def test_other_api_errors_are_reraised(self):
+        handle, account = make_wait_handle([])
+        account._cancel_order.side_effect = ApiError(500, "boom")
+
+        with pytest.raises(ApiError, match="boom"):
+            await handle.cancel()
+        account._get_order.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_timeout_raises(self):
+        account = AsyncMock()
+        account._stream = None
+        account._get_order.return_value = order_record("PENDING_CANCEL")
+        handle = OrderHandle(account, 42)
+
+        with pytest.raises(OrderTimeoutError) as exc_info:
+            await handle.cancel(timeout=0.05, poll_interval=0.01)
+        assert exc_info.value.status is OrderStatus.PENDING_CANCEL
 
 
 class TestWaitStream:

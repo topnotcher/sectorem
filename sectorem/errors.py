@@ -168,7 +168,9 @@ class OrderTimeoutError(OrderError, TimeoutError):
     Raised when waiting on an order exceeds the caller's timeout.
 
     The order is still working, so ``result`` is only a snapshot: more can fill
-    between the last read and whatever the caller does next.
+    between the last read and whatever the caller does next. To learn what
+    finally filled, call :meth:`~sectorem.trader.order.OrderHandle.cancel`,
+    which returns the final result.
 
     :param result: The order as last read before the timeout.
     :param timeout: The timeout that elapsed, in seconds.

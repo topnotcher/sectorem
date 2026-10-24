@@ -7,7 +7,7 @@ import enum
 import logging
 from typing import TYPE_CHECKING, Any
 
-from ..errors import OrderNotFilledError, OrderTimeoutError, StreamError
+from ..errors import ApiError, OrderNotFilledError, OrderTimeoutError, StreamError
 from ..stream.fields import AccountActivityField, StreamService
 from .constants import AssetType, OrderStatus
 from .parse import parse_order_result
@@ -229,7 +229,15 @@ class OrderHandle:
     A handle to a submitted order.
 
     Returned by :meth:`OrderBuilder.submit`. Use it to check on, wait for,
-    replace, or cancel the order.
+    replace, or cancel the order. The typical pattern::
+
+        try:
+            result = await handle.wait(timeout=30)
+        except OrderTimeoutError:
+            result = await handle.cancel()   # final: CANCELED (maybe partially filled) or FILLED
+        except OrderNotFilledError as e:
+            result = e.result                # final: canceled, rejected, expired, ...
+        print(result.filled_quantity, result.average_price)
     """
 
     def __init__(self, account: Account, order_id: int) -> None:
@@ -252,9 +260,38 @@ class OrderHandle:
         """Fetch the current order status from the API."""
         return (await self.result()).status
 
-    async def cancel(self) -> None:
-        """Cancel the order."""
-        await self._account._cancel_order(self.order_id)
+    async def cancel(self, *, timeout: float | None = None, poll_interval: float | None = None) -> OrderResult:
+        """
+        Cancel the order and wait for it to settle.
+
+        Sends the cancel request, then waits for the order to reach a terminal
+        state. Shares can fill between the request and Schwab acting on it, and
+        an order that has already finished cannot be canceled at all, so the
+        returned result is the authoritative account of what filled: status
+        ``CANCELED`` with any partial fills recorded, or ``FILLED`` if the
+        order completed first. Canceling an order that is already terminal
+        simply returns its result.
+
+        :param timeout: Maximum seconds to wait for the cancel to settle, or
+            ``None`` to wait indefinitely.
+        :param poll_interval: Seconds between status polls; see :meth:`wait`.
+        :raises OrderTimeoutError: If *timeout* elapses before the order settles.
+        """
+        try:
+            await self._account._cancel_order(self.order_id)
+        except ApiError as e:
+            # Schwab answers 400 "Order in state FILLED cannot be canceled" for a
+            # filled order (an already-canceled one is silently re-accepted). If
+            # the order is indeed done, its result is the answer; otherwise the
+            # error is genuine.
+            if e.status != 400:
+                raise
+            result = await self.result()
+            if not result.status.is_terminal:
+                raise
+            return result
+
+        return await self._wait_terminal(timeout, poll_interval)
 
     def replace(
         self, symbol: str | Option | None = None, side: Side | None = None, quantity: int | None = None,
@@ -293,7 +330,8 @@ class OrderHandle:
             than filled (canceled, rejected, expired, replaced, or unknown).
             The result it carries is final.
         :raises OrderTimeoutError: If *timeout* elapses first. The order is left
-            working; the result it carries is a snapshot.
+            working; the result it carries is a snapshot, and :meth:`cancel`
+            returns the final word.
         """
         result = await self._wait_terminal(timeout, poll_interval)
         if result.status is not OrderStatus.FILLED:

@@ -670,16 +670,21 @@ class TestAccountOrders:
             received_method = request.method
             return web.Response(status=200)
 
+        async def order_handler(request):
+            return web.json_response(_order_json("CANCELED"))
+
         app = self._base_app()
         app.router.add_delete("/trader/v1/accounts/abc/orders/1003", cancel_handler)
+        app.router.add_get("/trader/v1/accounts/abc/orders/1003", order_handler)
         server = await aiohttp_server(app)
 
         client = TraderClient(mock_auth)
         client._base_url = str(server.make_url("/trader/v1"))
         account = await client.get_account("123")
-        await OrderHandle(account, 1003).cancel()
+        result = await OrderHandle(account, 1003).cancel(poll_interval=0.001)
 
         assert received_method == "DELETE"
+        assert result.status is OrderStatus.CANCELED
 
     @pytest.mark.asyncio
     async def test_handle_replace_returns_new_handle(self, mock_auth, aiohttp_server):
