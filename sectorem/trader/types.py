@@ -305,11 +305,10 @@ InitialBalance = MarginInitialBalance | CashInitialBalance
 class ValidationMessage:
     """
     A message from Schwab's order validation.
-
-    :param level: Severity of the message.
-    :param message: Human-readable text.
     """
+    #: Severity of the message.
     level: OrderValidationLevel
+    #: Human-readable text.
     message: str
 
 
@@ -321,25 +320,24 @@ class OrderPreview:
     From the ``previewOrder`` response. An accepted preview has an empty
     ``orderValidationResult``; a rejected one carries one or more messages
     (e.g. "You do not have enough available cash/buying power for this order.").
-
-    :param status: Validation verdict (``ACCEPTED`` when the order would be placed).
-    :param order_value: Notional value of the order.
-    :param projected_available_funds: Available funds after the order.
-    :param projected_buying_power: Buying power after the order.
-    :param projected_intraday_buying_power: Intraday buying power after the order.
-    :param projected_commission: Commission estimate from the balance projection.
-    :param commission: Total commission across all legs.
-    :param fees: Total regulatory fees across all legs.
-    :param messages: Validation messages, if any.
     """
+    #: Validation verdict (``ACCEPTED`` when the order would be placed).
     status: OrderStatus
+    #: Notional value of the order.
     order_value: float
+    #: Available funds after the order.
     projected_available_funds: float
+    #: Buying power after the order.
     projected_buying_power: float
+    #: Intraday buying power after the order.
     projected_intraday_buying_power: float
+    #: Commission estimate from the balance projection.
     projected_commission: float
+    #: Total commission across all legs.
     commission: float
+    #: Total regulatory fees across all legs.
     fees: float
+    #: Validation messages, if any.
     messages: tuple[ValidationMessage, ...] = ()
 
 
@@ -347,15 +345,14 @@ class OrderPreview:
 class Execution:
     """
     A single execution (fill) against an order leg.
-
-    :param leg_id: Which leg of the order was filled.
-    :param quantity: Shares or contracts filled in this execution.
-    :param price: Execution price per unit.
-    :param time: When the execution occurred.
     """
+    #: Which leg of the order was filled.
     leg_id: int
+    #: Shares or contracts filled in this execution.
     quantity: float
+    #: Execution price per unit.
     price: float
+    #: When the execution occurred.
     time: datetime
 
 
@@ -372,19 +369,18 @@ class OrderResult:
     canceled, ends ``CANCELED`` or ``EXPIRED`` with a non-zero
     ``filled_quantity``. Always read ``filled_quantity`` rather than inferring
     fills from ``status``.
-
-    :param order_id: The Schwab order ID.
-    :param status: Order status at the time of the read.
-    :param quantity: Quantity requested.
-    :param filled_quantity: Quantity filled so far.
-    :param remaining_quantity: Quantity still open.
-    :param executions: Individual fills, in the order the API reported them.
     """
+    #: The Schwab order ID.
     order_id: int
+    #: Order status at the time of the read.
     status: OrderStatus
+    #: Quantity requested.
     quantity: float
+    #: Quantity filled so far.
     filled_quantity: float
+    #: Quantity still open.
     remaining_quantity: float
+    #: Individual fills, in the order the API reported them.
     executions: tuple[Execution, ...] = ()
 
     @property
