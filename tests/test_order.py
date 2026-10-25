@@ -129,6 +129,16 @@ class TestTimeInForce:
         assert payload["duration"] == duration
 
 
+class TestBuildAllOrNone:
+    def test_absent_by_default(self):
+        payload = make_builder().leg("AAPL", Side.BUY, 100).limit(150.0).build()
+        assert "specialInstruction" not in payload
+
+    def test_sets_special_instruction(self):
+        payload = make_builder().leg("AAPL", Side.BUY, 100).limit(150.0).all_or_none().build()
+        assert payload["specialInstruction"] == "ALL_OR_NONE"
+
+
 class TestBuildValidation:
     def test_no_order_type_raises(self):
         with pytest.raises(ValueError, match="Order type is required"):

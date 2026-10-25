@@ -121,6 +121,7 @@ class OrderBuilder:
         self._tif: TimeInForce = TimeInForce.DAY
         self._price: str | None = None
         self._stop_price: str | None = None
+        self._all_or_none: bool = False
         self._legs: list[dict[str, Any]] = []
 
     def leg(self, symbol: str | Option, side: Side, quantity: int) -> OrderBuilder:
@@ -173,6 +174,19 @@ class OrderBuilder:
         self._tif = tif
         return self
 
+    def all_or_none(self) -> OrderBuilder:
+        """
+        Require the order to fill completely in one execution or not at all.
+
+        Without this, an order can partially fill. Schwab accepts all-or-none
+        only in the regular session (:attr:`TimeInForce.DAY` or
+        :attr:`TimeInForce.GTC`) and rejects it for the extended ``EXT``
+        values. All-or-none orders are not protected by the NBBO, so the
+        market can trade through the limit price while the order sits unfilled.
+        """
+        self._all_or_none = True
+        return self
+
     def build(self) -> dict[str, Any]:
         """
         Build the order payload dict.
@@ -203,6 +217,8 @@ class OrderBuilder:
             payload["price"] = self._price
         if self._stop_price is not None:
             payload["stopPrice"] = self._stop_price
+        if self._all_or_none:
+            payload["specialInstruction"] = "ALL_OR_NONE"
 
         return payload
 
