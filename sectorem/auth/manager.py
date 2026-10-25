@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import enum
 import logging
+import secrets
 from collections.abc import Callable, Coroutine
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -138,6 +139,8 @@ class Authenticator(AuthProvider):
         self._token_cond = asyncio.Condition()
         self._maintenance_task: asyncio.Task | None = None
         self._reauth_prompted: bool = False
+        #: OAuth ``state`` sent with the outstanding authorization URL. A callback must echo it to be accepted.
+        self._auth_state: str | None = None
 
     @property
     def state(self) -> AuthState:
@@ -224,20 +227,41 @@ class Authenticator(AuthProvider):
             self._session = None
 
     async def _on_callback(self, params: dict[str, str]) -> None:
-        """Handle the OAuth redirect from Schwab."""
-        self._reauth_prompted = False
+        """
+        Handle the OAuth redirect from Schwab.
+
+        The redirect is accepted only if it carries the ``state`` sent with the outstanding authorization URL, so a
+        stray or forged request can neither complete the flow nor trigger a new prompt.
+        """
+        if self._auth_state is None:
+            log.warning("Callback received with no authorization pending; ignoring.")
+            return
+        if not secrets.compare_digest(params.get("state", ""), self._auth_state):
+            log.warning("Callback received with an invalid state; ignoring.")
+            return
+
+        self._auth_state = None
 
         code = params.get("code")
         if code is None:
+            # The maintenance loop may be blocked waiting for a token, so prompt from here rather than leaving it to
+            # the loop.
             log.warning("Callback received without authorization code: %s", params)
+            self._prompt_for_auth()
             return
 
         log.info("Authorization code received; exchanging for tokens.")
-        data = await self._token_request({
-            "grant_type": "authorization_code",
-            "code": code,
-            "redirect_uri": self._server.url,
-        })
+        try:
+            data = await self._token_request({
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": self._server.url,
+            })
+        except AuthenticationError:
+            log.error("Authorization code exchange failed; prompting again.")
+            self._prompt_for_auth()
+            raise
+        self._reauth_prompted = False
         token = Token.from_response(data)
         await self._token_store.save(token)
         await self._update_token(token)
@@ -314,6 +338,7 @@ class Authenticator(AuthProvider):
 
     def _prompt_for_auth(self) -> None:
         self._reauth_prompted = True
+        self._auth_state = secrets.token_urlsafe(32)
         auth_url = self._build_auth_url()
         log.info("Authorization required: %s", auth_url)
         asyncio.create_task(self._login_prompt(auth_url))
@@ -324,6 +349,7 @@ class Authenticator(AuthProvider):
             "client_id": self._app_key,
             "redirect_uri": self._server.url,
             "response_type": "code",
+            "state": self._auth_state,
         })
         return f"{AUTH_URL}?{params}"
 

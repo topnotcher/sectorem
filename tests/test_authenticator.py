@@ -1,6 +1,7 @@
 """Tests for the Authenticator state machine."""
 
 import asyncio
+from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +10,7 @@ import pytest
 from sectorem.auth.manager import Authenticator, AuthState
 from sectorem.auth.server import CallbackServer
 from sectorem.auth.token import Token, TokenStore
-from sectorem.errors import NotAuthenticatedError
+from sectorem.errors import AuthenticationError, NotAuthenticatedError
 
 
 class MemoryTokenStore(TokenStore):
@@ -87,6 +88,12 @@ def _token_response(access_token: str = "new-access", refresh_token: str = "new-
         "scope": "api",
         "expires_in": expires_in,
     }
+
+
+def _prompted_state(prompt: AsyncMock) -> str:
+    """The ``state`` parameter of the most recent authorization URL passed to ``prompt``."""
+    (url,), _ = prompt.call_args
+    return parse_qs(urlparse(url).query)["state"][0]
 
 
 class TestAuthenticatorLifecycle:
@@ -197,13 +204,14 @@ class TestAuthenticatorLifecycle:
     async def test_callback_exchanges_code_and_activates(self):
         factory, servers = _fake_server_factory()
         store = MemoryTokenStore()
+        prompt = AsyncMock()
 
         auth = Authenticator(
             app_key="key",
             app_secret="secret",
             token_store=store,
             server_factory=factory,
-            login_prompt=AsyncMock(),
+            login_prompt=prompt,
         )
 
         with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
@@ -212,7 +220,7 @@ class TestAuthenticatorLifecycle:
             await asyncio.sleep(0.05)
             assert auth.state == AuthState.AUTHENTICATING
 
-            await servers[0].simulate_redirect({"code": "auth-code-123"})
+            await servers[0].simulate_redirect({"code": "auth-code-123", "state": _prompted_state(prompt)})
 
             assert auth.state == AuthState.READY
             assert await auth.get_access_token() == "new-access"
@@ -222,13 +230,14 @@ class TestAuthenticatorLifecycle:
     @pytest.mark.asyncio
     async def test_wait_resolves_on_activation(self):
         factory, servers = _fake_server_factory()
+        prompt = AsyncMock()
 
         auth = Authenticator(
             app_key="key",
             app_secret="secret",
             token_store=MemoryTokenStore(),
             server_factory=factory,
-            login_prompt=AsyncMock(),
+            login_prompt=prompt,
         )
 
         with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
@@ -237,7 +246,7 @@ class TestAuthenticatorLifecycle:
 
             async def activate_later():
                 await asyncio.sleep(0.05)
-                await servers[0].simulate_redirect({"code": "abc"})
+                await servers[0].simulate_redirect({"code": "abc", "state": _prompted_state(prompt)})
 
             task = asyncio.create_task(activate_later())
             await asyncio.wait_for(auth.wait(), timeout=2)
@@ -261,3 +270,97 @@ class TestAuthenticatorLifecycle:
 
         assert auth.state == AuthState.INACTIVE
         assert servers[0].stopped
+
+
+class TestAuthenticatorCallbackState:
+    @staticmethod
+    async def _start(store=None, prompt=None):
+        factory, servers = _fake_server_factory()
+        prompt = prompt or AsyncMock()
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=store or MemoryTokenStore(),
+            server_factory=factory,
+            login_prompt=prompt,
+        )
+        await auth.start()
+        await asyncio.sleep(0.05)
+        return auth, servers[0], prompt
+
+    @pytest.mark.asyncio
+    async def test_authorization_url_carries_state(self):
+        auth, _, prompt = await self._start()
+        try:
+            assert len(_prompted_state(prompt)) >= 32
+        finally:
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("params", [{"code": "abc"}, {"code": "abc", "state": "forged"}])
+    async def test_callback_without_matching_state_is_ignored(self, params):
+        auth, server, prompt = await self._start()
+        try:
+            with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+                await server.simulate_redirect(params)
+                await asyncio.sleep(0.05)
+
+                mock_req.assert_not_called()
+                assert auth.state == AuthState.AUTHENTICATING
+                prompt.assert_called_once()  # a stray request does not trigger a new prompt
+        finally:
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_callback_with_no_authorization_pending_is_ignored(self):
+        auth, server, prompt = await self._start(store=MemoryTokenStore(_make_valid_token()))
+        try:
+            with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+                await server.simulate_redirect({"code": "abc", "state": ""})
+
+                mock_req.assert_not_called()
+                prompt.assert_not_called()
+                assert auth.state == AuthState.READY
+        finally:
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_state_is_single_use(self):
+        auth, server, prompt = await self._start()
+        try:
+            state = _prompted_state(prompt)
+            with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = _token_response()
+                await server.simulate_redirect({"code": "abc", "state": state})
+                await server.simulate_redirect({"code": "again", "state": state})
+
+                assert mock_req.call_count == 1
+        finally:
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_matching_state_without_code_prompts_again_with_new_state(self):
+        auth, server, prompt = await self._start()
+        try:
+            first = _prompted_state(prompt)
+            await server.simulate_redirect({"error": "access_denied", "state": first})
+            await asyncio.sleep(0.05)
+
+            assert prompt.call_count == 2
+            assert _prompted_state(prompt) != first
+        finally:
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_failed_code_exchange_prompts_again(self):
+        auth, server, prompt = await self._start()
+        try:
+            with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+                mock_req.side_effect = AuthenticationError("Token request failed: 400")
+                with pytest.raises(AuthenticationError):
+                    await server.simulate_redirect({"code": "stale", "state": _prompted_state(prompt)})
+
+            assert prompt.call_count == 2
+            assert auth.state == AuthState.AUTHENTICATING
+        finally:
+            await auth.stop()
