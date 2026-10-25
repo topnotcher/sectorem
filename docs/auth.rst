@@ -117,6 +117,14 @@ a reverse proxy or integrated into an existing web app), implement
         # Wire `callback` into your existing route handler
         return server
 
+Call ``callback`` with the redirect's query parameters. It returns a
+:class:`~sectorem.auth.server.CallbackResult` saying what happened: tokens
+obtained, the redirect ignored (an out-of-date, reused or forged link, judged
+by the OAuth ``state``), access declined, or the code exchange failed (e.g. the
+code expired). In the last two cases a new authorization URL has already been
+sent to the login prompt. Show the person something that matches;
+``CALLBACK_RESPONSES`` holds the default status and text for each result.
+
     auth = Authenticator(
         app_key="...",
         app_secret="...",

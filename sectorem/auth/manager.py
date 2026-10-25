@@ -15,7 +15,7 @@ import aiohttp
 from aiohttp import ClientSession
 
 from ..errors import AuthenticationError, NotAuthenticatedError
-from .server import CallbackServer, ServerFactory, localhost_server
+from .server import CallbackResult, CallbackServer, ServerFactory, localhost_server
 from .token import Token, TokenStore
 
 log = logging.getLogger(__name__)
@@ -226,19 +226,20 @@ class Authenticator(AuthProvider):
             await self._session.close()
             self._session = None
 
-    async def _on_callback(self, params: dict[str, str]) -> None:
+    async def _on_callback(self, params: dict[str, str]) -> CallbackResult:
         """
         Handle the OAuth redirect from Schwab.
 
         The redirect is accepted only if it carries the ``state`` sent with the outstanding authorization URL, so a
-        stray or forged request can neither complete the flow nor trigger a new prompt.
+        stray or forged request can neither complete the flow nor trigger a new prompt. Failures are reported in the
+        result rather than raised, so the callback server only has to render it.
         """
         if self._auth_state is None:
             log.warning("Callback received with no authorization pending; ignoring.")
-            return
+            return CallbackResult.IGNORED
         if not secrets.compare_digest(params.get("state", ""), self._auth_state):
             log.warning("Callback received with an invalid state; ignoring.")
-            return
+            return CallbackResult.IGNORED
 
         self._auth_state = None
 
@@ -248,7 +249,7 @@ class Authenticator(AuthProvider):
             # the loop.
             log.warning("Callback received without authorization code: %s", params)
             self._prompt_for_auth()
-            return
+            return CallbackResult.DENIED
 
         log.info("Authorization code received; exchanging for tokens.")
         try:
@@ -257,14 +258,15 @@ class Authenticator(AuthProvider):
                 "code": code,
                 "redirect_uri": self._server.url,
             })
-        except AuthenticationError:
-            log.error("Authorization code exchange failed; prompting again.")
+        except (AuthenticationError, aiohttp.ClientError) as e:
+            log.warning("Authorization code exchange failed; prompting again: %s", e)
             self._prompt_for_auth()
-            raise
+            return CallbackResult.FAILED
         self._reauth_prompted = False
         token = Token.from_response(data)
         await self._token_store.save(token)
         await self._update_token(token)
+        return CallbackResult.AUTHORIZED
 
     async def _maintenance_loop(self) -> None:
         """

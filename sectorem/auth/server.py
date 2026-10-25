@@ -3,14 +3,38 @@
 from __future__ import annotations
 
 import abc
+import enum
 import ssl
 from collections.abc import Awaitable, Callable
 from importlib import resources
 
 from aiohttp import web
 
-#: Called by the server when Schwab redirects with query parameters.
-AuthCallback = Callable[[dict[str, str]], Awaitable[None]]
+class CallbackResult(enum.Enum):
+    """What the authenticator did with a redirect, so the server can tell the person in the browser."""
+
+    #: Tokens were obtained.
+    AUTHORIZED = enum.auto()
+    #: The redirect does not belong to the outstanding authorization (out of date, already used, or forged).
+    #: Nothing changed.
+    IGNORED = enum.auto()
+    #: The redirect carried no code (e.g. access was declined). A new authorization URL has been prompted.
+    DENIED = enum.auto()
+    #: Exchanging the code for tokens failed (e.g. the code expired). A new authorization URL has been prompted.
+    FAILED = enum.auto()
+
+
+#: Default HTTP status and page text for each :class:`CallbackResult`. ``None`` is for callbacks that report nothing.
+CALLBACK_RESPONSES: dict[CallbackResult | None, tuple[int, str]] = {
+    CallbackResult.AUTHORIZED: (200, "Authorization complete. You may close this window."),
+    CallbackResult.IGNORED: (400, "This authorization link is out of date or has already been used."),
+    CallbackResult.DENIED: (400, "Authorization was not granted. A new authorization link has been issued."),
+    CallbackResult.FAILED: (502, "Authorization failed. A new authorization link has been issued."),
+    None: (200, "Authorization received. You may close this window."),
+}
+
+#: Called by the server when Schwab redirects with query parameters. Returns what was done with the redirect.
+AuthCallback = Callable[[dict[str, str]], Awaitable[CallbackResult | None]]
 
 #: Factory that creates a :class:`CallbackServer` wired to a callback.
 ServerFactory = Callable[[AuthCallback], Awaitable["CallbackServer"]]
@@ -93,11 +117,8 @@ class AiohttpCallbackServer(CallbackServer):
 
     async def _handle(self, request: web.Request) -> web.Response:
         params = dict(request.query)
-        await self._callback(params)
-        return web.Response(
-            text="Authorization complete. You may close this window.",
-            content_type="text/plain",
-        )
+        status, text = CALLBACK_RESPONSES[await self._callback(params)]
+        return web.Response(status=status, text=text, content_type="text/plain")
 
 
 def _default_ssl_context() -> ssl.SSLContext:

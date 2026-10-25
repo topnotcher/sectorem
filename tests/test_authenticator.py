@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from sectorem.auth.manager import Authenticator, AuthState
-from sectorem.auth.server import CallbackServer
+from sectorem.auth.server import CallbackResult, CallbackServer
 from sectorem.auth.token import Token, TokenStore
 from sectorem.errors import AuthenticationError, NotAuthenticatedError
 
@@ -46,7 +46,7 @@ class FakeCallbackServer(CallbackServer):
 
     async def simulate_redirect(self, params: dict[str, str]) -> None:
         """Simulate Schwab redirecting with the given query params."""
-        await self._callback(params)
+        return await self._callback(params)
 
 
 def _fake_server_factory():
@@ -220,7 +220,9 @@ class TestAuthenticatorLifecycle:
             await asyncio.sleep(0.05)
             assert auth.state == AuthState.AUTHENTICATING
 
-            await servers[0].simulate_redirect({"code": "auth-code-123", "state": _prompted_state(prompt)})
+            result = await servers[0].simulate_redirect({"code": "auth-code-123", "state": _prompted_state(prompt)})
+
+            assert result == CallbackResult.AUTHORIZED
 
             assert auth.state == AuthState.READY
             assert await auth.get_access_token() == "new-access"
@@ -302,7 +304,7 @@ class TestAuthenticatorCallbackState:
         auth, server, prompt = await self._start()
         try:
             with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
-                await server.simulate_redirect(params)
+                assert await server.simulate_redirect(params) == CallbackResult.IGNORED
                 await asyncio.sleep(0.05)
 
                 mock_req.assert_not_called()
@@ -316,7 +318,7 @@ class TestAuthenticatorCallbackState:
         auth, server, prompt = await self._start(store=MemoryTokenStore(_make_valid_token()))
         try:
             with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
-                await server.simulate_redirect({"code": "abc", "state": ""})
+                assert await server.simulate_redirect({"code": "abc", "state": ""}) == CallbackResult.IGNORED
 
                 mock_req.assert_not_called()
                 prompt.assert_not_called()
@@ -331,8 +333,8 @@ class TestAuthenticatorCallbackState:
             state = _prompted_state(prompt)
             with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
                 mock_req.return_value = _token_response()
-                await server.simulate_redirect({"code": "abc", "state": state})
-                await server.simulate_redirect({"code": "again", "state": state})
+                assert await server.simulate_redirect({"code": "abc", "state": state}) == CallbackResult.AUTHORIZED
+                assert await server.simulate_redirect({"code": "again", "state": state}) == CallbackResult.IGNORED
 
                 assert mock_req.call_count == 1
         finally:
@@ -343,9 +345,10 @@ class TestAuthenticatorCallbackState:
         auth, server, prompt = await self._start()
         try:
             first = _prompted_state(prompt)
-            await server.simulate_redirect({"error": "access_denied", "state": first})
+            result = await server.simulate_redirect({"error": "access_denied", "state": first})
             await asyncio.sleep(0.05)
 
+            assert result == CallbackResult.DENIED
             assert prompt.call_count == 2
             assert _prompted_state(prompt) != first
         finally:
@@ -357,9 +360,9 @@ class TestAuthenticatorCallbackState:
         try:
             with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
                 mock_req.side_effect = AuthenticationError("Token request failed: 400")
-                with pytest.raises(AuthenticationError):
-                    await server.simulate_redirect({"code": "stale", "state": _prompted_state(prompt)})
+                result = await server.simulate_redirect({"code": "stale", "state": _prompted_state(prompt)})
 
+            assert result == CallbackResult.FAILED
             assert prompt.call_count == 2
             assert auth.state == AuthState.AUTHENTICATING
         finally:

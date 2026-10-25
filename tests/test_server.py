@@ -6,7 +6,7 @@ import ssl
 import aiohttp
 import pytest
 
-from sectorem.auth.server import AiohttpCallbackServer, localhost_server, _default_ssl_context
+from sectorem.auth.server import AiohttpCallbackServer, CallbackResult, localhost_server, _default_ssl_context
 
 
 async def _noop(params):
@@ -116,3 +116,27 @@ class TestLocalhostServerFactory:
         assert server._port == 8443
         assert server._path == '/'
         assert server._ssl_context is not None
+
+
+class TestCallbackResponses:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("result, status, text", [
+        (CallbackResult.AUTHORIZED, 200, "Authorization complete"),
+        (CallbackResult.IGNORED, 400, "out of date"),
+        (CallbackResult.DENIED, 400, "not granted"),
+        (CallbackResult.FAILED, 502, "Authorization failed"),
+    ])
+    async def test_page_reflects_result(self, result, status, text):
+        async def callback(_params):
+            return result
+
+        server = AiohttpCallbackServer(callback, "127.0.0.1", 0, "/callback")
+        await server.start()
+        try:
+            port = list(server._runner._sites)[0]._server.sockets[0].getsockname()[1]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"http://127.0.0.1:{port}/callback?state=x") as resp:
+                    assert resp.status == status
+                    assert text in await resp.text()
+        finally:
+            await server.stop()
