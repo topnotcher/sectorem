@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import abc
 import dataclasses
 import json
@@ -135,11 +136,17 @@ class FileTokenStore(TokenStore):
                 log.exception("Failed to parse token file %s; ignoring", self._path)
                 return None
 
+    @staticmethod
+    def _private_opener(path: str, flags: int) -> int:
+        fd = os.open(path, flags, 0o600)
+        os.fchmod(fd, 0o600)
+        return fd
+
     async def save(self, token: Token) -> None:
         await aiofiles.os.makedirs(self._path.parent, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
 
-        async with aiofiles.open(tmp, "w", encoding="utf-8") as f:
+        async with aiofiles.open(tmp, "w", encoding="utf-8", opener=self._private_opener) as f:
             await f.write(json.dumps(token.to_dict(), indent=2))
 
         await aiofiles.os.rename(tmp, self._path)

@@ -1,5 +1,6 @@
 """Tests for Token model and TokenStore implementations."""
 
+import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -104,3 +105,13 @@ class TestFileTokenStore:
         store = FileTokenStore(path)
         await store.save(_make_token())
         assert path.exists()
+
+    @pytest.mark.asyncio
+    async def test_save_permissions(self, tmp_path):
+        path = tmp_path / "tokens.json"
+        store = FileTokenStore(path)
+        token = _make_token()
+        await store.save(token)
+        # Check that the file has restrictive permissions (owner read/write only)
+        mode = path.stat().st_mode
+        assert mode & 0o777 == 0o600
