@@ -92,7 +92,7 @@ def _token_response(access_token: str = "new-access", refresh_token: str = "new-
 
 def _prompted_state(prompt: AsyncMock) -> str:
     """The ``state`` parameter of the most recent authorization URL passed to ``prompt``."""
-    (url,), _ = prompt.call_args
+    (url, _deadline), _ = prompt.call_args
     return parse_qs(urlparse(url).query)["state"][0]
 
 
@@ -227,6 +227,75 @@ class TestAuthenticatorLifecycle:
             assert auth.state == AuthState.READY
             assert await auth.get_access_token() == "new-access"
             assert store.token is not None
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_callback_reports_authorization(self):
+        factory, servers = _fake_server_factory()
+        prompt = AsyncMock()
+        authorized = AsyncMock()
+
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=MemoryTokenStore(),
+            server_factory=factory,
+            login_prompt=prompt,
+            on_authorized=authorized,
+        )
+
+        with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _token_response()
+            await auth.start()
+            await asyncio.sleep(0.05)
+            authorized.assert_not_called()
+
+            await servers[0].simulate_redirect({"code": "auth-code-123", "state": _prompted_state(prompt)})
+            await asyncio.sleep(0)
+
+            (expires_at,), _ = authorized.call_args
+            assert expires_at - datetime.now(timezone.utc) > timedelta(days=6, hours=23)
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_prompt_without_token_has_no_deadline(self):
+        factory, _ = _fake_server_factory()
+        prompt = AsyncMock()
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=MemoryTokenStore(),
+            server_factory=factory,
+            login_prompt=prompt,
+        )
+        await auth.start()
+        try:
+            await asyncio.sleep(0.05)
+            (_url, deadline), _ = prompt.call_args
+            assert deadline is None
+        finally:
+            await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_reauth_prompt_carries_refresh_expiry(self):
+        factory, _ = _fake_server_factory()
+        token = _make_valid_token(refresh_days=6)
+        prompt = AsyncMock()
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=MemoryTokenStore(token),
+            server_factory=factory,
+            login_prompt=prompt,
+            reauth_threshold=timedelta(days=2),
+        )
+        await auth.start()
+        try:
+            await asyncio.sleep(0.05)
+            assert auth.state == AuthState.READY
+            (_url, deadline), _ = prompt.call_args
+            assert deadline == token.refresh_expires_at
+        finally:
             await auth.stop()
 
     @pytest.mark.asyncio

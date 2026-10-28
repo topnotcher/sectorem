@@ -33,13 +33,20 @@ _MAINTENANCE_POLL_INTERVAL = 10.0
 #: before the loop has had a chance to refresh.
 _ACCESS_WAIT_TIMEOUT = _MAINTENANCE_POLL_INTERVAL + 5.0
 
-#: Receives the authorization URL; presents it to the user.
-LoginPrompt = Callable[[str], Coroutine[None, None, None]]
+#: Receives the authorization URL and when the current refresh token expires (``None`` if there is none or it has
+#: expired); presents the URL to the user.
+LoginPrompt = Callable[[str, datetime | None], Coroutine[None, None, None]]
+
+#: Called after an authorization completes, with when the new refresh token expires.
+OnAuthorized = Callable[[datetime], Coroutine[None, None, None]]
 
 
-async def _default_prompt(url: str) -> None:
+async def _default_prompt(url: str, deadline: datetime | None) -> None:
     """Print the authorization URL to stdout."""
-    print(f"Authorize at: {url}")
+    if deadline is None:
+        print(f"Authorize at: {url}")
+    else:
+        print(f"Authorize before {deadline:%Y-%m-%d %H:%M %Z} at: {url}")
 
 
 class AuthState(enum.Enum):
@@ -106,6 +113,8 @@ class Authenticator(AuthProvider):
         a localhost aiohttp server on port 8080.
     :param login_prompt: Called when the user must visit an
         authorization URL.  Defaults to printing to stdout.
+    :param on_authorized: Called after the user completes an
+        authorization.
     :param reauth_threshold: How long before refresh-token expiry to
         proactively request re-authorization.
     :param access_refresh_buffer: How long before access-token expiry
@@ -119,6 +128,7 @@ class Authenticator(AuthProvider):
         token_store: TokenStore,
         server_factory: ServerFactory | None = None,
         login_prompt: LoginPrompt | None = None,
+        on_authorized: OnAuthorized | None = None,
         reauth_threshold: timedelta = timedelta(days=1),
         access_refresh_buffer: timedelta = timedelta(seconds=60),
     ) -> None:
@@ -129,6 +139,7 @@ class Authenticator(AuthProvider):
         self._token_store = token_store
         self._server_factory = server_factory or localhost_server()
         self._login_prompt = login_prompt or _default_prompt
+        self._on_authorized = on_authorized
         self._reauth_threshold = reauth_threshold
         self._access_refresh_buffer = access_refresh_buffer
 
@@ -266,6 +277,8 @@ class Authenticator(AuthProvider):
         token = Token.from_response(data)
         await self._token_store.save(token)
         await self._update_token(token)
+        if self._on_authorized is not None:
+            asyncio.create_task(self._on_authorized(token.refresh_expires_at))
         return CallbackResult.AUTHORIZED
 
     async def _maintenance_loop(self) -> None:
@@ -342,8 +355,9 @@ class Authenticator(AuthProvider):
         self._reauth_prompted = True
         self._auth_state = secrets.token_urlsafe(32)
         auth_url = self._build_auth_url()
+        deadline = None if self._refresh_expired() else self._token.refresh_expires_at
         log.info("Authorization required: %s", auth_url)
-        asyncio.create_task(self._login_prompt(auth_url))
+        asyncio.create_task(self._login_prompt(auth_url, deadline))
 
     def _build_auth_url(self) -> str:
         """Build the Schwab authorization URL."""

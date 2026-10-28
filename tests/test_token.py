@@ -115,3 +115,16 @@ class TestFileTokenStore:
         # Check that the file has restrictive permissions (owner read/write only)
         mode = path.stat().st_mode
         assert mode & 0o777 == 0o600
+
+    @pytest.mark.asyncio
+    async def test_save_with_mode(self, tmp_path):
+        path = tmp_path / "tokens.json"
+        await FileTokenStore(path, mode=0o640).save(_make_token())
+        assert path.stat().st_mode & 0o777 == 0o640
+
+    @pytest.mark.asyncio
+    async def test_save_ignores_leftover_temporary_mode(self, tmp_path):
+        path = tmp_path / "tokens.json"
+        path.with_suffix(".tmp").touch(mode=0o644)
+        await FileTokenStore(path).save(_make_token())
+        assert path.stat().st_mode & 0o777 == 0o600

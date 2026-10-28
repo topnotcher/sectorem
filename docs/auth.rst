@@ -22,6 +22,8 @@ pieces:
   on ``127.0.0.1:8443`` with a bundled self-signed certificate.
 - **login_prompt** — an async callback that presents the
   authorization URL to the user. Defaults to printing to stdout.
+- **on_authorized** — an optional async callback, called with the new
+  refresh token's expiry once the user completes an authorization.
 
 The rest of the library never touches the Authenticator directly.
 It depends only on the :class:`~sectorem.auth.manager.AuthProvider` interface:
@@ -49,7 +51,9 @@ token life cycle:
 
 Tokens are persisted via a :class:`~sectorem.auth.token.TokenStore` backend.
 The built-in :class:`~sectorem.auth.token.FileTokenStore` writes JSON to disk
-using aiofiles.
+using aiofiles. The file is private to its owner (``0600``) unless a wider
+``mode`` is given, e.g. ``FileTokenStore(path, mode=0o640)`` to let the group,
+or a POSIX ACL entry, read it.
 
 Custom Auth Provider
 --------------------
@@ -137,12 +141,13 @@ Custom Login Prompt
 
 By default, the :class:`~sectorem.auth.manager.Authenticator` prints the
 authorization URL to stdout. You can replace this with any async callable
-that takes a URL string — open a browser, send a push notification, post
-to Slack, whatever fits your workflow::
+that takes the URL and when the current refresh token expires (``None`` if
+there is none or it has already expired) — open a browser, send a push
+notification, post to Slack, whatever fits your workflow::
 
     import webbrowser
 
-    async def browser_prompt(url: str) -> None:
+    async def browser_prompt(url: str, deadline: datetime | None) -> None:
         webbrowser.open(url)
 
     auth = Authenticator(
@@ -155,8 +160,8 @@ to Slack, whatever fits your workflow::
 A bound method works too::
 
     class MyApp:
-        async def on_schwab_login(self, url: str) -> None:
-            await self.notify_user(f"Please authorize: {url}")
+        async def on_schwab_login(self, url: str, deadline: datetime | None) -> None:
+            await self.notify_user(f"Please authorize by {deadline}: {url}")
 
     app = MyApp()
     auth = Authenticator(..., login_prompt=app.on_schwab_login)

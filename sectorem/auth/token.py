@@ -119,10 +119,17 @@ class TokenStore(abc.ABC):
 
 
 class FileTokenStore(TokenStore):
-    """Store tokens as JSON on the local filesystem."""
+    """
+    Store tokens as JSON on the local filesystem.
 
-    def __init__(self, path: str | Path) -> None:
+    :param path: The token file.
+    :param mode: Permissions the file is written with. The default keeps it private to the owner; a wider mode, such
+        as ``0o640``, lets the group or a POSIX ACL entry read it (the group bits are the ACL mask).
+    """
+
+    def __init__(self, path: str | Path, mode: int = 0o600) -> None:
         self._path = Path(path).expanduser()
+        self._mode = mode
 
     async def load(self) -> Token | None:
         if not (await aiofiles.os.path.isfile(self._path)):
@@ -136,17 +143,17 @@ class FileTokenStore(TokenStore):
                 log.exception("Failed to parse token file %s; ignoring", self._path)
                 return None
 
-    @staticmethod
-    def _private_opener(path: str, flags: int) -> int:
-        fd = os.open(path, flags, 0o600)
-        os.fchmod(fd, 0o600)
+    def _opener(self, path: str, flags: int) -> int:
+        fd = os.open(path, flags, self._mode)
+        # Neither the umask nor a leftover temporary file's mode applies.
+        os.fchmod(fd, self._mode)
         return fd
 
     async def save(self, token: Token) -> None:
         await aiofiles.os.makedirs(self._path.parent, exist_ok=True)
         tmp = self._path.with_suffix(".tmp")
 
-        async with aiofiles.open(tmp, "w", encoding="utf-8", opener=self._private_opener) as f:
+        async with aiofiles.open(tmp, "w", encoding="utf-8", opener=self._opener) as f:
             await f.write(json.dumps(token.to_dict(), indent=2))
 
         await aiofiles.os.rename(tmp, self._path)
