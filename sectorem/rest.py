@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -12,9 +13,13 @@ from aiohttp import ClientRequest, ClientResponse, ClientHandlerType, ClientSess
 from typing import Any, AsyncGenerator
 
 from .auth import AuthProvider
-from .errors import ApiError
+from .errors import ApiError, CreatedResourceError
 
 log = logging.getLogger(__name__)
+
+
+#: Failures worth retrying when reading back a created resource.
+_CREATED_FETCH_ERRORS = (ApiError, aiohttp.ClientError, TimeoutError)
 
 
 class PrettyFloat(float):
@@ -41,6 +46,12 @@ class RestClient:
     :param base_url: API base URL (e.g.
         ``https://api.schwabapi.com/trader/v1``).
     """
+
+    #: Reads of a newly created resource before giving up, e.g. after a transient error or while it is not yet
+    #: visible.
+    CREATED_FETCH_ATTEMPTS = 4
+    #: Seconds before the first retry of such a read; doubled for each one after.
+    CREATED_FETCH_DELAY = 0.5
 
     def __init__(self, auth: AuthProvider, base_url: str) -> None:
         self._auth = auth
@@ -94,13 +105,36 @@ class RestClient:
         at the new resource; that location is resolved against the request URL
         and followed with a GET, returning the created resource. Other
         responses without a JSON body yield an empty dict.
+
+        :raises CreatedResourceError: If the resource was created but could not be read back.
         """
         async with self._send(method, url, **kwargs) as resp:
-            if resp.status == 201 and (location := resp.headers.get("Location")):
-                return await self._request_url("GET", urljoin(url, location))
-            if resp.content_type == "application/json":
-                return json.loads(await resp.text(), parse_float=PrettyFloat)
-            return {}
+            location = resp.headers.get("Location") if resp.status == 201 else None
+            if location is None:
+                if resp.content_type == "application/json":
+                    return json.loads(await resp.text(), parse_float=PrettyFloat)
+                return {}
+        return await self._get_created(urljoin(url, location))
+
+    async def _get_created(self, location: str) -> dict:
+        """
+        Read a newly created resource, retrying failed reads: the request that created it must not be repeated.
+
+        :raises CreatedResourceError: If every read fails.
+        """
+        delay = self.CREATED_FETCH_DELAY
+        for attempt in range(0, self.CREATED_FETCH_ATTEMPTS):
+            try:
+                return await self._request_url("GET", location)
+            except _CREATED_FETCH_ERRORS as e:
+                # The location names the account (by its hash), so it stays out of the log and the message.
+                log.warning("Reading a created resource failed (attempt %d); retrying: %s", attempt + 1, e)
+            await asyncio.sleep(delay)
+            delay *= 2
+
+        raise CreatedResourceError(
+            location, f"Created a resource but could not read it back.",
+        )
 
     @staticmethod
     async def _api_error_from_resp(resp: aiohttp.ClientResponse) -> None:

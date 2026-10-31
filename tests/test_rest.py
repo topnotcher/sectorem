@@ -9,7 +9,7 @@ import pytest_asyncio
 from aiohttp import web
 
 from sectorem.auth.manager import AuthProvider
-from sectorem.errors import ApiError, RateLimitError
+from sectorem.errors import ApiError, CreatedResourceError, RateLimitError
 from sectorem.rest import RestClient
 
 
@@ -142,6 +142,59 @@ class TestFollowLocation:
         result = await client.post("orders")
 
         assert result == {"ok": True}
+
+
+    @pytest.mark.asyncio
+    async def test_201_retries_reading_the_created_resource(self, mock_auth, aiohttp_server):
+        """A failed read of the new resource is retried; the creating request is sent once."""
+        calls = {"post": 0, "get": 0}
+
+        async def create_handler(request):
+            calls["post"] += 1
+            return web.Response(status=201, headers={"Location": "/v1/orders/123"})
+
+        async def get_handler(request):
+            calls["get"] += 1
+            if calls["get"] < 3:
+                return web.json_response({"message": "busy"}, status=503)
+            return web.json_response({"orderId": 123})
+
+        app = web.Application()
+        app.router.add_post("/v1/orders", create_handler)
+        app.router.add_get("/v1/orders/123", get_handler)
+        server = await aiohttp_server(app)
+
+        client = RestClient(mock_auth, str(server.make_url("/v1")))
+        client.CREATED_FETCH_DELAY = 0
+        result = await client.post("orders", json={"symbol": "AAPL"})
+
+        assert result == {"orderId": 123}
+        assert calls == {"post": 1, "get": 3}
+
+    @pytest.mark.asyncio
+    async def test_201_unreadable_resource_raises_with_its_location(self, mock_auth, aiohttp_server):
+        calls = {"post": 0, "get": 0}
+
+        async def create_handler(request):
+            calls["post"] += 1
+            return web.Response(status=201, headers={"Location": "/v1/orders/123"})
+
+        async def get_handler(request):
+            calls["get"] += 1
+            return web.json_response({"message": "busy"}, status=503)
+
+        app = web.Application()
+        app.router.add_post("/v1/orders", create_handler)
+        app.router.add_get("/v1/orders/123", get_handler)
+        server = await aiohttp_server(app)
+
+        client = RestClient(mock_auth, str(server.make_url("/v1")))
+        client.CREATED_FETCH_DELAY = 0
+        with pytest.raises(CreatedResourceError) as raised:
+            await client.post("orders", json={"symbol": "AAPL"})
+
+        assert raised.value.location == str(server.make_url("/v1/orders/123"))
+        assert calls == {"post": 1, "get": RestClient.CREATED_FETCH_ATTEMPTS}
 
 
 class TestErrorMapping:

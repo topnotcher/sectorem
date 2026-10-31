@@ -115,6 +115,23 @@ class InvalidApiResponseError(SectoremError):
     """Raised when an API response is missing expected fields or is otherwise malformed."""
 
 
+class CreatedResourceError(SectoremError):
+    """
+    Raised when a request created a resource (HTTP 201) but reading it back from its ``Location`` failed.
+
+    The resource exists, e.g. a placed order: the request must not be repeated. ``location`` is where it can be
+    read once the API answers again.
+
+    :param location: The resource's URL, from the ``Location`` header.
+    :param message: Human-readable description.
+    """
+
+    def __init__(self, location: str, message: str) -> None:
+        #: The created resource's URL.
+        self.location = location
+        super().__init__(message)
+
+
 class StreamError(SectoremError):
     """Raised when the streaming connection encounters an error."""
 
