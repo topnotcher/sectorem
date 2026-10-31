@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ..auth import AuthProvider
 from ..rest import RestClient
 from .constants import AccountType
 from .order import OrderBuilder, OrderHandle, Side
-from .types import Balance, InitialBalance, Option, OrderPreview, Position
-from .parse import parse_balance, parse_initial_balance, parse_order_preview, parse_position
+from .types import Balance, InitialBalance, Option, OrderPreview, Position, Transaction
+from .parse import parse_balance, parse_initial_balance, parse_order_preview, parse_position, parse_transaction
 
 if TYPE_CHECKING:
     from ..stream import StreamClient
@@ -187,6 +188,19 @@ class Account:
 
         return [parse_position(p) for p in positions]
 
+    async def get_transactions(self, start: datetime, end: datetime, types: str = "TRADE") -> list[Transaction]:
+        """
+        Get the account's transactions between two times, e.g. the executions of its orders with their fees.
+
+        :param start: Earliest transaction time (aware).
+        :param end: Latest transaction time (aware). Schwab allows at most a year between ``start`` and ``end``.
+        :param types: Schwab transaction type(s), comma separated, e.g. ``"TRADE"``.
+        """
+        raw = await self._client.get(f"accounts/{self._account_hash}/transactions", params={
+            "startDate": _api_time(start), "endDate": _api_time(end), "types": types,
+        })
+        return [parse_transaction(t) for t in raw]
+
     async def get_balances(self) -> Balance:
         """
         Get current balances for this account.
@@ -218,3 +232,8 @@ class Account:
 
         info = await self._client.get(f"accounts/{self._account_hash}", **kwargs)
         return info['securitiesAccount']
+
+
+def _api_time(value: datetime) -> str:
+    """Format an aware time as the API expects, e.g. ``2026-10-30T14:00:00.000Z``."""
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")

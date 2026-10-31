@@ -32,6 +32,8 @@ from .types import (
     OrderResult,
     OrderResultLeg,
     Position,
+    Transaction,
+    TransferItem,
     ValidationMessage,
 )
 
@@ -436,3 +438,44 @@ def _parse_occ_symbol(occ: str) -> tuple[float, date]:
     expiration = date(2000 + int(date_str[:2]), int(date_str[2:4]), int(date_str[4:6]))
 
     return strike, expiration
+
+
+def parse_transaction(raw: dict) -> Transaction:
+    """
+    Parse a transaction from ``GET /accounts/{hash}/transactions``.
+
+    :raises InvalidApiResponseError: If required fields are missing.
+    """
+    fields = _extract_fields(raw, _TRANSACTION_FIELDS, "transaction")
+    fields["time"] = _parse_timestamp(fields["time"])
+    return Transaction(
+        order_id=raw.get("orderId"), items=tuple(_parse_transfer_item(item) for item in raw.get("transferItems", [])),
+        **fields,
+    )
+
+
+def _parse_transfer_item(raw: dict) -> TransferItem:
+    fields = _extract_fields(raw, _TRANSFER_ITEM_FIELDS, "transfer item")
+    instrument = _extract_fields(raw.get("instrument", {}), _TRANSFER_INSTRUMENT_FIELDS, "transfer item instrument")
+    return TransferItem(
+        asset_type=AssetType(instrument["asset_type"]), symbol=instrument["symbol"], price=raw.get("price"),
+        position_effect=raw.get("positionEffect"), fee_type=raw.get("feeType"), **fields,
+    )
+
+
+_TRANSACTION_FIELDS: dict[str, str] = {
+    "activityId": "activity_id",
+    "type": "type",
+    "time": "time",
+    "netAmount": "net_amount",
+}
+
+_TRANSFER_ITEM_FIELDS: dict[str, str] = {
+    "amount": "amount",
+    "cost": "cost",
+}
+
+_TRANSFER_INSTRUMENT_FIELDS: dict[str, str] = {
+    "assetType": "asset_type",
+    "symbol": "symbol",
+}

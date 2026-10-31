@@ -410,3 +410,50 @@ class OrderResult:
         if not filled:
             return None
         return sum(e.quantity * e.price for e in self.executions) / filled
+
+
+@dataclass(slots=True, frozen=True)
+class TransferItem:
+    """
+    One movement of cash or an instrument within a :class:`Transaction`: a traded instrument, or a fee.
+    """
+    #: Asset type of the instrument moved; fees are ``CURRENCY``.
+    asset_type: AssetType
+    #: The instrument's symbol, e.g. ``"SPXW  261030P07325000"``; ``"CURRENCY_USD"`` for a fee.
+    symbol: str
+    #: Quantity moved, signed: negative for a sale. A fee's amount is positive.
+    amount: float
+    #: Cash effect, signed: positive is cash in, negative is cash out (fees are negative).
+    cost: float
+    #: Price per unit of a traded instrument; ``None`` for a fee.
+    price: float | None = None
+    #: ``"OPENING"`` or ``"CLOSING"`` for a traded instrument; ``None`` for a fee.
+    position_effect: str | None = None
+    #: The fee's kind, e.g. ``"COMMISSION"`` or ``"OPT_REG_FEE"``; ``None`` for a traded instrument.
+    fee_type: str | None = None
+
+
+@dataclass(slots=True, frozen=True)
+class Transaction:
+    """
+    A transaction from the account's history, e.g. one execution of an order with its fees.
+
+    An order that fills in several executions has a transaction for each, all with its ``order_id``.
+    """
+    #: Schwab's id for the transaction.
+    activity_id: int
+    #: The order it belongs to, if any.
+    order_id: int | None
+    #: Transaction type, e.g. ``"TRADE"``.
+    type: str
+    #: When it happened.
+    time: datetime
+    #: Net cash effect of all items, fees included: positive is cash in.
+    net_amount: float
+    #: Instruments and fees moved.
+    items: tuple[TransferItem, ...] = ()
+
+    @property
+    def fees(self) -> float:
+        """Total fees and commissions charged, as a positive amount."""
+        return -sum(item.cost for item in self.items if item.fee_type is not None)

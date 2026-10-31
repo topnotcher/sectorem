@@ -12,6 +12,7 @@ from sectorem.trader.constants import (
 )
 from sectorem.trader.parse import (
     parse_order_result,
+    parse_transaction,
     parse_balance,
     parse_initial_balance,
     parse_order_preview,
@@ -23,6 +24,8 @@ from sectorem.trader.types import (
     Execution,
     OrderResult,
     OrderResultLeg,
+    Transaction,
+    TransferItem,
     CashBalance,
     CashInitialBalance,
     CollectiveInvestmentPosition,
@@ -615,3 +618,57 @@ class TestParseOrderResult:
         }]}
         with pytest.raises(InvalidApiResponseError, match="timestamp"):
             parse_order_result(raw)
+
+
+def _option_item(symbol, amount, cost, price, effect="OPENING"):
+    return {
+        "instrument": {"assetType": "OPTION", "symbol": symbol, "putCall": "PUT"},
+        "amount": amount, "cost": cost, "price": price, "positionEffect": effect,
+    }
+
+
+def _fee_item(fee_type, amount):
+    return {
+        "instrument": {"assetType": "CURRENCY", "symbol": "CURRENCY_USD"},
+        "amount": amount, "cost": -amount, "feeType": fee_type,
+    }
+
+
+#: Shaped like a real transactions response; the values are made up.
+SPREAD_TRANSACTION_RAW = {
+    "activityId": 5001, "time": "2026-10-30T14:00:01+0000", "type": "TRADE", "status": "VALID",
+    "orderId": 9, "netAmount": 247.36,
+    "transferItems": [
+        _fee_item("COMMISSION", 2.6), _fee_item("OPT_REG_FEE", 0.04), _fee_item("TAF_FEE", 0.0),
+        _option_item("SPXW  261030P05700000", -2.0, 820.0, 4.10),
+        _option_item("SPXW  261030P05650000", 2.0, -570.0, 2.85),
+    ],
+}
+
+
+class TestParseTransaction:
+    def test_spread_execution_with_fees(self):
+        result = parse_transaction(SPREAD_TRANSACTION_RAW)
+
+        assert (result.activity_id, result.order_id, result.type) == (5001, 9, "TRADE")
+        assert result.time == datetime(2026, 10, 30, 14, 0, 1, tzinfo=timezone.utc)
+        assert result.items[3] == TransferItem(
+            asset_type=AssetType.OPTION, symbol="SPXW  261030P05700000", amount=-2.0, cost=820.0, price=4.10,
+            position_effect="OPENING",
+        )
+        assert result.items[0] == TransferItem(
+            asset_type=AssetType.CURRENCY, symbol="CURRENCY_USD", amount=2.6, cost=-2.6, fee_type="COMMISSION",
+        )
+        assert result.fees == pytest.approx(2.64)
+        assert result.net_amount == pytest.approx(sum(item.cost for item in result.items))
+
+    def test_without_order(self):
+        raw = {**SPREAD_TRANSACTION_RAW, "transferItems": []}
+        del raw["orderId"]
+        result = parse_transaction(raw)
+        assert (result.order_id, result.items, result.fees) == (None, (), 0)
+
+    def test_missing_field_raises(self):
+        raw = {key: value for key, value in SPREAD_TRANSACTION_RAW.items() if key != "netAmount"}
+        with pytest.raises(InvalidApiResponseError, match="netAmount"):
+            parse_transaction(raw)

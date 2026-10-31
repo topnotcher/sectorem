@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -617,6 +617,37 @@ class TestAccountOrders:
         app.router.add_get("/trader/v1/accounts/accountNumbers", numbers_handler)
         app.router.add_get("/trader/v1/userPreference", prefs_handler)
         return app
+
+    @pytest.mark.asyncio
+    async def test_get_transactions(self, mock_auth, aiohttp_server):
+        received = {}
+
+        async def transactions_handler(request):
+            received.update(request.query)
+            return web.json_response([{
+                "activityId": 5001, "time": "2026-10-30T14:00:01+0000", "type": "TRADE", "orderId": 9,
+                "netAmount": -0.66, "transferItems": [{
+                    "instrument": {"assetType": "CURRENCY", "symbol": "CURRENCY_USD"},
+                    "amount": 0.66, "cost": -0.66, "feeType": "COMMISSION",
+                }],
+            }])
+
+        app = self._base_app()
+        app.router.add_get("/trader/v1/accounts/abc/transactions", transactions_handler)
+        server = await aiohttp_server(app)
+
+        client = TraderClient(mock_auth)
+        client._base_url = str(server.make_url("/trader/v1"))
+        account = await client.get_account("123")
+        eastern = timezone(timedelta(hours=-4))
+        transactions = await account.get_transactions(
+            datetime(2026, 10, 30, 9, 30, tzinfo=eastern), datetime(2026, 10, 30, 16, 0, tzinfo=eastern),
+        )
+
+        assert received == {
+            "startDate": "2026-10-30T13:30:00.000Z", "endDate": "2026-10-30T20:00:00.000Z", "types": "TRADE",
+        }
+        assert [(t.order_id, t.fees) for t in transactions] == [(9, pytest.approx(0.66))]
 
     @pytest.mark.asyncio
     async def test_submit_returns_handle(self, mock_auth, aiohttp_server):
