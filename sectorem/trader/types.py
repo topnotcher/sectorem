@@ -342,6 +342,19 @@ class OrderPreview:
 
 
 @dataclass(slots=True, frozen=True)
+class OrderResultLeg:
+    """
+    A leg of a submitted order, as the API reports it.
+    """
+    #: The leg's id, which :attr:`Execution.leg_id` refers to.
+    leg_id: int
+    #: The instrument's symbol, e.g. ``"SPXW  261030P07325000"``.
+    symbol: str
+    #: Quantity ordered for the leg.
+    quantity: float
+
+
+@dataclass(slots=True, frozen=True)
 class Execution:
     """
     A single execution (fill) against an order leg.
@@ -382,6 +395,8 @@ class OrderResult:
     remaining_quantity: float
     #: Individual fills, in the order the API reported them.
     executions: tuple[Execution, ...] = ()
+    #: The order's legs, for matching executions to them.
+    legs: tuple[OrderResultLeg, ...] = ()
 
     @property
     def average_price(self) -> float | None:

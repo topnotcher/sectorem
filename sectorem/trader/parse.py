@@ -30,6 +30,7 @@ from .types import (
     OptionPosition,
     OrderPreview,
     OrderResult,
+    OrderResultLeg,
     Position,
     ValidationMessage,
 )
@@ -316,6 +317,11 @@ _ORDER_RESULT_FIELDS: dict[str, str] = {
     "remainingQuantity": "remaining_quantity",
 }
 
+_ORDER_LEG_FIELDS: dict[str, str] = {
+    "legId": "leg_id",
+    "quantity": "quantity",
+}
+
 _EXECUTION_FIELDS: dict[str, str] = {
     "legId": "leg_id",
     "quantity": "quantity",
@@ -344,7 +350,16 @@ def parse_order_result(raw: dict) -> OrderResult:
             leg_fields["time"] = _parse_timestamp(leg_fields["time"])
             executions.append(Execution(**leg_fields))
 
-    return OrderResult(status=parse_order_status(raw.get("status")), executions=tuple(executions), **fields)
+    legs = tuple(_parse_order_leg(leg) for leg in raw.get("orderLegCollection", []))
+    return OrderResult(
+        status=parse_order_status(raw.get("status")), executions=tuple(executions), legs=legs, **fields,
+    )
+
+
+def _parse_order_leg(raw: dict) -> OrderResultLeg:
+    fields = _extract_fields(raw, _ORDER_LEG_FIELDS, "order leg")
+    fields.update(_extract_fields(raw.get("instrument", {}), {"symbol": "symbol"}, "order leg instrument"))
+    return OrderResultLeg(**fields)
 
 
 def _parse_timestamp(raw: Any) -> datetime:

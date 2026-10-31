@@ -22,6 +22,7 @@ from sectorem.trader.parse import (
 from sectorem.trader.types import (
     Execution,
     OrderResult,
+    OrderResultLeg,
     CashBalance,
     CashInitialBalance,
     CollectiveInvestmentPosition,
@@ -572,6 +573,40 @@ class TestParseOrderResult:
     def test_missing_field_raises(self):
         with pytest.raises(InvalidApiResponseError, match="filledQuantity"):
             parse_order_result({"orderId": 7, "status": "WORKING", "quantity": 5, "remainingQuantity": 5})
+
+    def test_legs_match_executions(self):
+        """Each execution's legId names a leg of the order (shaped like the single-leg records; not a capture)."""
+        def leg(leg_id, symbol, instruction):
+            return {
+                "orderLegType": "OPTION", "legId": leg_id, "instruction": instruction, "quantity": 2.0,
+                "positionEffect": "OPENING", "instrument": {"assetType": "OPTION", "symbol": symbol},
+            }
+
+        def execution(leg_id, price):
+            return {"legId": leg_id, "quantity": 2.0, "price": price, "time": "2026-10-30T14:00:01+0000"}
+
+        raw = {
+            "orderId": 9, "status": "FILLED", "quantity": 2.0, "filledQuantity": 2.0, "remainingQuantity": 0.0,
+            "orderLegCollection": [
+                leg(1, "SPXW  261030P05700000", "SELL_TO_OPEN"), leg(2, "SPXW  261030P05650000", "BUY_TO_OPEN"),
+            ],
+            "orderActivityCollection": [{
+                "activityType": "EXECUTION", "executionType": "FILL",
+                "executionLegs": [execution(2, 2.85), execution(1, 4.10)],
+            }],
+        }
+
+        result = parse_order_result(raw)
+
+        assert result.legs == (
+            OrderResultLeg(1, "SPXW  261030P05700000", 2.0), OrderResultLeg(2, "SPXW  261030P05650000", 2.0),
+        )
+        assert [(e.leg_id, e.price) for e in result.executions] == [(2, 2.85), (1, 4.10)]
+
+    def test_leg_without_symbol_raises(self):
+        raw = {**FILLED_RAW, "orderLegCollection": [{"legId": 1, "quantity": 1.0, "instrument": {}}]}
+        with pytest.raises(InvalidApiResponseError, match="order leg instrument"):
+            parse_order_result(raw)
 
     def test_bad_timestamp_raises(self):
         raw = {**FILLED_RAW, "orderActivityCollection": [{
