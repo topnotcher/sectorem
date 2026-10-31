@@ -1,6 +1,7 @@
 """Tests for the Authenticator state machine."""
 
 import asyncio
+import logging
 from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
@@ -275,6 +276,28 @@ class TestAuthenticatorLifecycle:
             assert deadline is None
         finally:
             await auth.stop()
+
+    @pytest.mark.asyncio
+    async def test_prompt_url_is_not_logged(self, caplog):
+        factory, _ = _fake_server_factory()
+        prompt = AsyncMock()
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=MemoryTokenStore(),
+            server_factory=factory,
+            login_prompt=prompt,
+        )
+        with caplog.at_level(logging.DEBUG, logger="sectorem.auth"):
+            await auth.start()
+            try:
+                await asyncio.sleep(0.05)
+                state = _prompted_state(prompt)
+            finally:
+                await auth.stop()
+        assert "Authorization required; prompting for login." in caplog.text
+        assert state not in caplog.text
+        assert "client_id" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_reauth_prompt_carries_refresh_expiry(self):

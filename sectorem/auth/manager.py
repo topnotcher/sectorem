@@ -356,7 +356,11 @@ class Authenticator(AuthProvider):
         self._auth_state = secrets.token_urlsafe(32)
         auth_url = self._build_auth_url()
         deadline = None if self._refresh_expired() else self._token.refresh_expires_at
-        log.info("Authorization required: %s", auth_url)
+        # The URL carries the app key and the state, so it goes to the prompt only, not the log.
+        if deadline is None:
+            log.info("Authorization required; prompting for login.")
+        else:
+            log.info("Authorization required before %s; prompting for login.", deadline)
         asyncio.create_task(self._login_prompt(auth_url, deadline))
 
     def _build_auth_url(self) -> str:
