@@ -322,6 +322,10 @@ class Authenticator(AuthProvider):
         except AuthenticationError:
             log.error("Token refresh failed; re-authorization required.")
             await self._update_token(None)
+        except (aiohttp.ClientError, TimeoutError) as e:
+            # The refresh is still due, so without the sleep the loop would retry at once, and keep doing so.
+            log.warning("Token refresh failed; retrying in %.0fs: %r", _MAINTENANCE_POLL_INTERVAL, e)
+            await asyncio.sleep(_MAINTENANCE_POLL_INTERVAL)
         else:
             token = Token.from_response(data, refresh_issued_at=self._token.refresh_issued_at)
             await self._update_token(token)

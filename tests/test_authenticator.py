@@ -6,6 +6,7 @@ from urllib.parse import parse_qs, urlparse
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
+import aiohttp
 import pytest
 
 from sectorem.auth.manager import Authenticator, AuthState
@@ -203,6 +204,35 @@ class TestAuthenticatorLifecycle:
                 store.save.assert_called_once()
                 assert auth._maintenance_task is not None and not auth._maintenance_task.done()
                 assert "Failed to save the token" in caplog.text
+            finally:
+                await auth.stop()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("error", [aiohttp.ClientConnectionError("network down"), TimeoutError()])
+    async def test_refresh_network_error_retries(self, error, monkeypatch):
+        monkeypatch.setattr("sectorem.auth.manager._MAINTENANCE_POLL_INTERVAL", 0.05)
+        factory, _ = _fake_server_factory()
+        store = MemoryTokenStore(_make_valid_token(access_minutes=-5, refresh_days=1))
+
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=store,
+            server_factory=factory,
+            login_prompt=AsyncMock(),
+        )
+
+        with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+            mock_req.side_effect = [error, _token_response()]
+            await auth.start()
+            try:
+                await asyncio.sleep(0.02)
+                assert mock_req.call_count == 1
+                assert auth.state == AuthState.READY
+
+                await asyncio.sleep(0.1)
+                assert mock_req.call_count == 2
+                assert await auth.get_access_token() == "new-access"
             finally:
                 await auth.stop()
 
