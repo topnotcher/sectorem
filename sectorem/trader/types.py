@@ -32,10 +32,14 @@ class Option:
     """
     An option contract.
 
-    ``symbol`` is the underlying ticker (e.g. ``"SMCI"``), not the
-    OCC symbol. Use :meth:`occ_symbol` to get the OCC representation.
+    ``symbol`` is the option root, as in the OCC symbol (e.g.
+    ``"SMCI"``, or ``"SPXW"`` for SPX weeklies), not the full OCC
+    symbol. It is usually the underlying's ticker, but differs for
+    adjusted options (e.g. ``"SMCI1"``); a parsed instrument keeps
+    the underlying's ticker as its ``symbol``. Use :meth:`occ_symbol` to
+    get the OCC representation.
 
-    :param symbol: Underlying ticker symbol.
+    :param symbol: Option root.
     :param strike: Strike price.
     :param right: Put or call.
     :param expiration: Expiration date.

@@ -107,7 +107,8 @@ def _parse_option_instrument(raw: dict) -> OptionInstrument:
     API does not provide them as separate fields.
     """
     occ_symbol = raw["symbol"]
-    underlying = raw.get("underlyingSymbol") or occ_symbol[:6].strip()
+    root = occ_symbol[:6].strip()
+    underlying = raw.get("underlyingSymbol") or root
     right = OptionRight(raw["putCall"])
     multiplier = raw.get("optionMultiplier", 100)
 
@@ -116,7 +117,7 @@ def _parse_option_instrument(raw: dict) -> OptionInstrument:
     instrument_type = _parse_nullable_enum(InstrumentType, raw.get("type"))
 
     option = Option(
-        symbol=underlying,
+        symbol=root,
         strike=strike,
         right=right,
         expiration=expiration,

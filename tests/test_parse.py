@@ -194,6 +194,27 @@ class TestParsePosition:
         pos = parse_position(raw)
         assert pos.instrument.occ_symbol == "SMCI  270115P00008000"
 
+    def test_root_differs_from_underlying(self):
+        """An adjusted option keeps its OCC root; the instrument keeps the underlying."""
+        raw = {
+            "shortQuantity": 0.0,
+            "longQuantity": 1.0,
+            "averagePrice": 2.5,
+            "currentDayProfitLoss": 0.0,
+            "longOpenProfitLoss": 0.0,
+            "marketValue": 250.0,
+            "instrument": {
+                "assetType": "OPTION",
+                "symbol": "SMCI1 270115P00008000",
+                "putCall": "PUT",
+                "underlyingSymbol": "SMCI",
+            },
+        }
+        pos = parse_position(raw)
+        assert pos.instrument.option.symbol == "SMCI1"
+        assert pos.instrument.symbol == "SMCI"
+        assert pos.instrument.occ_symbol == "SMCI1 270115P00008000"
+
     def test_empty_positions(self):
         """Positions list is empty when no positions key exists."""
         raw = {
