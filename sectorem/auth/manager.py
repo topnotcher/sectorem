@@ -275,8 +275,8 @@ class Authenticator(AuthProvider):
             return CallbackResult.FAILED
         self._reauth_prompted = False
         token = Token.from_response(data)
-        await self._token_store.save(token)
         await self._update_token(token)
+        await self._save_token(token)
         if self._on_authorized is not None:
             asyncio.create_task(self._on_authorized(token.refresh_expires_at))
         return CallbackResult.AUTHORIZED
@@ -324,8 +324,20 @@ class Authenticator(AuthProvider):
             await self._update_token(None)
         else:
             token = Token.from_response(data, refresh_issued_at=self._token.refresh_issued_at)
-            await self._token_store.save(token)
             await self._update_token(token)
+            await self._save_token(token)
+
+    async def _save_token(self, token: Token) -> None:
+        """
+        Persist a token that is already in use.
+
+        A failed save is logged rather than raised: the token still works for this process, and raising would stop the
+        maintenance loop. The next refresh saves again.
+        """
+        try:
+            await self._token_store.save(token)
+        except Exception:
+            log.exception("Failed to save the token; it is in use but not persisted.")
 
     async def _update_token(self, token: Token | None) -> None:
         """Atomically update the current token and wake any waiters."""

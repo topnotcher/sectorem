@@ -181,6 +181,32 @@ class TestAuthenticatorLifecycle:
                 await auth.stop()
 
     @pytest.mark.asyncio
+    async def test_failed_save_keeps_refreshed_token(self, caplog):
+        factory, _ = _fake_server_factory()
+        store = MemoryTokenStore(_make_valid_token(access_minutes=-5, refresh_days=1))
+        store.save = AsyncMock(side_effect=OSError("store unavailable"))
+
+        auth = Authenticator(
+            app_key="key",
+            app_secret="secret",
+            token_store=store,
+            server_factory=factory,
+            login_prompt=AsyncMock(),
+        )
+
+        with patch.object(auth, "_token_request", new_callable=AsyncMock) as mock_req:
+            mock_req.return_value = _token_response()
+            await auth.start()
+            try:
+                await asyncio.sleep(0.05)
+                assert await auth.get_access_token() == "new-access"
+                store.save.assert_called_once()
+                assert auth._maintenance_task is not None and not auth._maintenance_task.done()
+                assert "Failed to save the token" in caplog.text
+            finally:
+                await auth.stop()
+
+    @pytest.mark.asyncio
     async def test_expired_refresh_reauthorizes(self):
         factory, _ = _fake_server_factory()
         token = _make_valid_token(access_minutes=-5, refresh_days=8)
