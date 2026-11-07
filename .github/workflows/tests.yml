@@ -20,6 +20,6 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
-      - run: pip install -e ".[dev]"
+      - run: pip install -e ".[dev,onepass]"
 
       - run: pytest tests/ -v

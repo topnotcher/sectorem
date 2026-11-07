@@ -27,6 +27,9 @@ docs = [
     "sphinx-rtd-theme~=3.1",
     "sphinx-autobuild~=2025.8",
 ]
+onepass = [
+    "onepassword-sdk~=0.4.2",
+]
 
 [tool.setuptools.package-data]
 sectorem = ["etc/*.crt", "etc/*.key"]

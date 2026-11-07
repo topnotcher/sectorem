@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.13"
 
-      - run: pip install -e ".[docs]"
+      - run: pip install -e ".[docs,onepass]"
 
       - run: sphinx-build -b html docs docs/_build/html
 

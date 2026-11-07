@@ -166,6 +166,81 @@ A bound method works too::
     app = MyApp()
     auth = Authenticator(..., login_prompt=app.on_schwab_login)
 
+Sharing Tokens Through 1Password
+--------------------------------
+
+:mod:`sectorem.auth.onepass` keeps the token in a 1Password item so that
+several processes or hosts can use one Schwab login. One process, the
+*writer*, runs an :class:`~sectorem.auth.manager.Authenticator` that stores its
+token in the item: it refreshes the access token every 30 minutes and handles
+the weekly re-authorization. Every other process is a *reader*: it reads the
+access token from the item and never contacts Schwab's token endpoint.
+
+Install the extra::
+
+    pip install sectorem[onepass]
+
+The item is an *API Credential* holding the Schwab app key in its
+``username`` field and the app secret in its ``credential`` field. The writer
+adds a concealed ``token`` field the first time it saves a token, or updates
+the existing one in place, keeping its type. There must be only one field
+titled ``token``. To use other field names, subclass
+:class:`~sectorem.auth.onepass.OnePasswordClient` and override its
+``*_FIELD_*`` attributes.
+
+Both sides start from a :class:`~sectorem.auth.onepass.OnePasswordClient`,
+which takes a service account token or a :class:`onepassword.DesktopAuth`
+plus the vault and item names. The writer gets an ``Authenticator`` from
+:func:`~sectorem.auth.onepass.create_authenticator`, which reads the app key
+and secret from the item and passes any other arguments through::
+
+    from sectorem import SchwabClient
+    from sectorem.auth.onepass import OnePasswordClient, create_authenticator
+
+    op = OnePasswordClient(os.environ["OP_SERVICE_ACCOUNT_TOKEN"], "trading", "schwab")
+    auth = await create_authenticator(op, login_prompt=post_to_discord)
+
+    async with SchwabClient(auth=auth) as client:
+        ...
+
+A reader uses :class:`~sectorem.auth.onepass.OnePasswordAuthProvider`::
+
+    from sectorem.auth.onepass import OnePasswordAuthProvider, OnePasswordClient
+
+    op = OnePasswordClient(os.environ["OP_SERVICE_ACCOUNT_TOKEN"], "trading", "schwab")
+
+    async with SchwabClient(auth=OnePasswordAuthProvider(op)) as client:
+        ...
+
+Things to know:
+
+- **Run exactly one writer per item.** Two writers would refresh
+  independently and overwrite each other's tokens. Nothing enforces this.
+- **Readers can read the whole item**, including the refresh token and the
+  app secret. 1Password grants access per vault, not per field. Give readers
+  a service account with read-only access to the vault, so that at least they
+  cannot change the item.
+- **Rate limits.** Service accounts are rate limited, and on individual and
+  Families accounts all service accounts share
+  `1,000 requests a day <https://developer.1password.com/docs/service-accounts/rate-limits/>`_.
+  The writer makes about 48 writes a day: one per refresh, since it keeps the
+  item it last read or wrote. Each reader reads the item once per access
+  token, about 48 times a day, plus three requests when it starts. While no
+  fresh token is available, for example while a re-authorization is pending,
+  readers poll with exponential backoff, up to every 5 minutes by default
+  (``max_poll_interval``).
+- **Timing.** A reader looks for the next token ``refresh_buffer`` (30
+  seconds) before the current one expires, and keeps returning the current
+  token while it looks. The writer refreshes ``access_refresh_buffer`` (60
+  seconds) before expiry, so the next token is normally already in the item
+  when the reader checks. Keep the reader's buffer shorter than the writer's.
+  Once the token has expired, :meth:`~sectorem.auth.onepass.OnePasswordAuthProvider.get_access_token`
+  waits up to ``access_wait_timeout`` for a new one, then raises
+  :class:`~sectorem.errors.NotAuthenticatedError`.
+- **Failed saves.** If the writer cannot save a token, it logs the error and
+  keeps using the token. Readers do not see that token, and catch up at the
+  next successful save, 30 minutes later.
+
 API Reference
 -------------
 
@@ -195,3 +270,21 @@ API Reference
    :members:
 
 .. autofunction:: sectorem.auth.server.localhost_server
+
+1Password
+~~~~~~~~~
+
+.. automodule:: sectorem.auth.onepass
+
+.. autoclass:: sectorem.auth.onepass.OnePasswordClient
+   :members:
+
+.. autoclass:: sectorem.auth.onepass.OnePasswordTokenStore
+   :members:
+
+.. autoclass:: sectorem.auth.onepass.OnePasswordAuthProvider
+   :members:
+
+.. autofunction:: sectorem.auth.onepass.create_authenticator
+
+.. autoexception:: sectorem.auth.onepass.OnePasswordLookupError
