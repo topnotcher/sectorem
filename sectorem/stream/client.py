@@ -23,6 +23,9 @@ _EASTERN = ZoneInfo("America/New_York")
 #: Default timeout for subscribe operations.
 SUBSCRIBE_TIMEOUT = 60
 
+#: Command parameters whose values are masked in the log: the LOGIN's access token.
+_SECRET_PARAMETERS = frozenset({"Authorization"})
+
 #: Callback type for streaming data messages.
 StreamCallback = Callable[[dict], Coroutine[Any, Any, None] | None]
 
@@ -420,7 +423,11 @@ class StreamClient:
                 "parameters": cmd.parameters,
             }],
         }
-        log.debug("Sending message % r", msg)
+        # Not the message itself: it holds the customer and correlation ids, and the LOGIN holds the access token.
+        log.debug(
+            "Sending %s %s (request %s): %r", cmd.service, cmd.command, cmd.request_id,
+            {name: "<masked>" if name in _SECRET_PARAMETERS else value for name, value in cmd.parameters.items()},
+        )
         await ws.send_json(msg)
 
     def _enqueue_add(self, service: str, keys: str | None, fields: Iterable[int]) -> asyncio.Future[dict]:
