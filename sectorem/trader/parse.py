@@ -6,6 +6,7 @@ import enum
 import logging
 from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from ..errors import InvalidApiResponseError
 from .constants import AccountType, AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel
@@ -373,6 +374,14 @@ def _parse_timestamp(raw: Any) -> datetime:
         raise InvalidApiResponseError(f"Unparseable timestamp {raw!r}") from e
 
 
+def _parse_eastern_date(raw: Any) -> date:
+    """Parse a date Schwab gives as midnight US Eastern time, such as ``2026-06-18T04:00:00+0000``."""
+    return _parse_timestamp(raw).astimezone(_EASTERN).date()
+
+
+_EASTERN = ZoneInfo("America/New_York")
+
+
 _ORDER_BALANCE_FIELDS: dict[str, str] = {
     "orderValue": "order_value",
     "projectedAvailableFund": "projected_available_funds",
@@ -451,6 +460,7 @@ def parse_transaction(raw: dict) -> Transaction:
     fields["time"] = _parse_timestamp(fields["time"])
     return Transaction(
         order_id=raw.get("orderId"), items=tuple(_parse_transfer_item(item) for item in raw.get("transferItems", [])),
+        settlement_date=_parse_eastern_date(raw["settlementDate"]) if "settlementDate" in raw else None,
         **fields,
     )
 

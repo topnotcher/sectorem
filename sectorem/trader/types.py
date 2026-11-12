@@ -456,6 +456,10 @@ class Transaction:
     net_amount: float
     #: Instruments and fees moved.
     items: tuple[TransferItem, ...] = ()
+    #: The day it settles, in US Eastern time; ``None`` if absent. For an option removed at expiration or by an
+    #: assignment, and for the shares an assignment trades, Schwab gives the day that happened, not the day after,
+    #: when it posts them.
+    settlement_date: date | None = None
 
     @property
     def fees(self) -> float:

@@ -689,6 +689,24 @@ class TestParseTransaction:
         result = parse_transaction(raw)
         assert (result.order_id, result.items, result.fees) == (None, (), 0)
 
+    @pytest.mark.parametrize("raw_date, expected", [
+        ("2026-06-18T04:00:00+0000", date(2026, 6, 18)),
+        ("2026-12-18T05:00:00+0000", date(2026, 12, 18)),
+    ])
+    def test_settlement_date_is_the_eastern_day(self, raw_date, expected):
+        raw = {
+            "activityId": 5002, "time": "2026-06-19T08:20:52+0000", "type": "RECEIVE_AND_DELIVER", "netAmount": 0.0,
+            "settlementDate": raw_date,
+            "transferItems": [_option_item("AMD   260618C00150000", 2.0, 0.0, 0.0, effect="CLOSING")],
+        }
+        result = parse_transaction(raw)
+
+        assert (result.type, result.order_id, result.settlement_date) == ("RECEIVE_AND_DELIVER", None, expected)
+        assert (result.items[0].amount, result.items[0].price, result.items[0].position_effect) == (2.0, 0.0, "CLOSING")
+
+    def test_without_settlement_date(self):
+        assert parse_transaction(SPREAD_TRANSACTION_RAW).settlement_date is None
+
     def test_missing_field_raises(self):
         raw = {key: value for key, value in SPREAD_TRANSACTION_RAW.items() if key != "netAmount"}
         with pytest.raises(InvalidApiResponseError, match="netAmount"):
