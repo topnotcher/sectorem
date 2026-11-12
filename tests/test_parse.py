@@ -696,16 +696,18 @@ class TestParseTransaction:
     def test_settlement_date_is_the_eastern_day(self, raw_date, expected):
         raw = {
             "activityId": 5002, "time": "2026-06-19T08:20:52+0000", "type": "RECEIVE_AND_DELIVER", "netAmount": 0.0,
-            "settlementDate": raw_date,
+            "settlementDate": raw_date, "description": "Removed due to Expiration CALL ADVANCED MICRO DEVIC$150 EXP 06/18/26",
             "transferItems": [_option_item("AMD   260618C00150000", 2.0, 0.0, 0.0, effect="CLOSING")],
         }
         result = parse_transaction(raw)
 
         assert (result.type, result.order_id, result.settlement_date) == ("RECEIVE_AND_DELIVER", None, expected)
+        assert result.description == "Removed due to Expiration CALL ADVANCED MICRO DEVIC$150 EXP 06/18/26"
         assert (result.items[0].amount, result.items[0].price, result.items[0].position_effect) == (2.0, 0.0, "CLOSING")
 
-    def test_without_settlement_date(self):
-        assert parse_transaction(SPREAD_TRANSACTION_RAW).settlement_date is None
+    def test_without_settlement_date_or_description(self):
+        result = parse_transaction(SPREAD_TRANSACTION_RAW)
+        assert (result.settlement_date, result.description) == (None, None)
 
     def test_missing_field_raises(self):
         raw = {key: value for key, value in SPREAD_TRANSACTION_RAW.items() if key != "netAmount"}

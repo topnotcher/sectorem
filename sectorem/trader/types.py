@@ -460,6 +460,9 @@ class Transaction:
     #: assignment, and for the shares an assignment trades, Schwab gives the day that happened, not the day after,
     #: when it posts them.
     settlement_date: date | None = None
+    #: Schwab's text for it, e.g. ``"Removed due to Expiration ..."``; ``None`` if absent. It is written for people:
+    #: worth logging, not something to decide by.
+    description: str | None = None
 
     @property
     def fees(self) -> float:

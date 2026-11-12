@@ -461,6 +461,7 @@ def parse_transaction(raw: dict) -> Transaction:
     return Transaction(
         order_id=raw.get("orderId"), items=tuple(_parse_transfer_item(item) for item in raw.get("transferItems", [])),
         settlement_date=_parse_eastern_date(raw["settlementDate"]) if "settlementDate" in raw else None,
+        description=raw.get("description"),
         **fields,
     )
 
