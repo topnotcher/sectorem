@@ -6,8 +6,8 @@ import enum
 import logging
 from datetime import date, datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
+from ..constants import MarketTimeZone
 from ..errors import InvalidApiResponseError
 from .constants import AccountType, AssetType, InstrumentType, OptionRight, OrderStatus, OrderValidationLevel
 from .types import (
@@ -376,10 +376,7 @@ def _parse_timestamp(raw: Any) -> datetime:
 
 def _parse_eastern_date(raw: Any) -> date:
     """Parse a date Schwab gives as midnight US Eastern time, such as ``2026-06-18T04:00:00+0000``."""
-    return _parse_timestamp(raw).astimezone(_EASTERN).date()
-
-
-_EASTERN = ZoneInfo("America/New_York")
+    return _parse_timestamp(raw).astimezone(MarketTimeZone).date()
 
 
 _ORDER_BALANCE_FIELDS: dict[str, str] = {

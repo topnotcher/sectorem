@@ -9,16 +9,15 @@ from collections.abc import Callable, Coroutine, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
-from zoneinfo import ZoneInfo
 
 import aiohttp
 
 from ..auth import AuthProvider
+from ..constants import MarketTimeZone
 from ..errors import StreamError
 from .fields import StreamField, StreamService
 
 log = logging.getLogger(__name__)
-_EASTERN = ZoneInfo("America/New_York")
 
 #: Default timeout for subscribe operations.
 SUBSCRIBE_TIMEOUT = 60
@@ -528,7 +527,7 @@ class StreamClient:
     @staticmethod
     def _transform_item(item: dict, service: str, timestamp: int | None, field_type: type[StreamField] | None) -> dict:
         """Transform a single content item into a flat event with named fields."""
-        ts = datetime.fromtimestamp(timestamp / 1000, tz=_EASTERN) if timestamp else None
+        ts = datetime.fromtimestamp(timestamp / 1000, tz=MarketTimeZone) if timestamp else None
         event: dict[str, Any] = {"service": service, "timestamp": ts}
         fields: dict[str, Any] = {}
 
